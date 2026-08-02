@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import html
 import json
 import os
@@ -8,7 +9,7 @@ import re
 import secrets
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -462,6 +463,63 @@ for _providers in API_PROVIDER_GROUPS.values():
 
 
 TEST_URL = "https://geo.brdtest.com/welcome.txt?product=unlocker&method=api"
+_API_DASHBOARD_STATS_LOCK = threading.Lock()
+_API_DASHBOARD_STATS_CACHE: Dict[str, Any] = {
+    "loaded_at": 0.0,
+    "refreshing": False,
+    "usage": {},
+    "tests": {},
+}
+
+
+def _refresh_api_dashboard_stats() -> None:
+    usage: Dict[str, Dict[str, Any]] = {}
+    tests: Dict[str, Dict[str, Any]] = {}
+    try:
+        usage = get_api_usage_stats(db_path())
+        tests = latest_api_tests(db_path())
+    except Exception:
+        pass
+    with _API_DASHBOARD_STATS_LOCK:
+        _API_DASHBOARD_STATS_CACHE.update(
+            {
+                "loaded_at": time.time(),
+                "refreshing": False,
+                "usage": usage,
+                "tests": tests,
+            }
+        )
+
+
+def _api_dashboard_stats(max_age_seconds: int = 60) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    with _API_DASHBOARD_STATS_LOCK:
+        loaded_at = float(_API_DASHBOARD_STATS_CACHE.get("loaded_at") or 0)
+        is_fresh = bool(loaded_at and (time.time() - loaded_at) < max_age_seconds)
+        usage = dict(_API_DASHBOARD_STATS_CACHE.get("usage") or {})
+        tests = dict(_API_DASHBOARD_STATS_CACHE.get("tests") or {})
+        if is_fresh:
+            return usage, tests
+        if not _API_DASHBOARD_STATS_CACHE.get("refreshing"):
+            _API_DASHBOARD_STATS_CACHE["refreshing"] = True
+            threading.Thread(target=_refresh_api_dashboard_stats, name="api-dashboard-stats", daemon=True).start()
+        return usage, tests
+
+
+def _remember_api_test_result(result: Dict[str, Any]) -> None:
+    provider = str(result.get("provider") or "")
+    if not provider:
+        return
+    with _API_DASHBOARD_STATS_LOCK:
+        tests = dict(_API_DASHBOARD_STATS_CACHE.get("tests") or {})
+        tests[provider] = {
+            "provider": provider,
+            "ok": bool(result.get("ok")),
+            "status": result.get("status") or "",
+            "message": result.get("message") or "",
+            "latency_ms": int(result.get("latency_ms") or 0),
+            "created_at": now_iso(),
+        }
+        _API_DASHBOARD_STATS_CACHE["tests"] = tests
 
 
 def api_field_rows() -> List[Dict[str, Any]]:
@@ -489,8 +547,7 @@ def api_field_rows() -> List[Dict[str, Any]]:
 def api_cards() -> List[Dict[str, Any]]:
     api = ApiConfig()
     availability = api.available()
-    usage = get_api_usage_stats(db_path())
-    latest_tests = latest_api_tests(db_path())
+    usage, latest_tests = _api_dashboard_stats()
     rows = api_field_rows()
     fields_by_provider: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
@@ -520,8 +577,25 @@ def _status_message(response: requests.Response, max_len: int = 260) -> str:
     try:
         data = response.json()
         if isinstance(data, dict):
+            errors = data.get("errors")
+            if isinstance(errors, list) and errors:
+                first_error = errors[0]
+                if isinstance(first_error, dict):
+                    text = str(first_error.get("message") or first_error.get("error") or "")
+                else:
+                    text = str(first_error)
+            messages = data.get("messages")
+            if not text and isinstance(messages, list) and messages:
+                first_message = messages[0]
+                if isinstance(first_message, dict):
+                    text = str(first_message.get("message") or first_message.get("code") or "")
+                else:
+                    text = str(first_message)
+            result = data.get("result")
+            if not text and isinstance(result, dict) and result.get("status"):
+                text = str(result.get("status"))
             for key in ("message", "error", "status", "name", "username"):
-                if data.get(key):
+                if not text and data.get(key):
                     text = str(data.get(key))
                     break
             if not text:
@@ -532,6 +606,58 @@ def _status_message(response: requests.Response, max_len: int = 260) -> str:
         text = (response.text or "")[:max_len]
     text = re.sub(r"\s+", " ", text).strip()
     return text or f"HTTP {response.status_code}"
+
+
+def _aws_signing_key(secret: str, date_stamp: str, region: str = "auto", service: str = "s3") -> bytes:
+    key_date = hmac.new(("AWS4" + secret).encode("utf-8"), date_stamp.encode("utf-8"), hashlib.sha256).digest()
+    key_region = hmac.new(key_date, region.encode("utf-8"), hashlib.sha256).digest()
+    key_service = hmac.new(key_region, service.encode("utf-8"), hashlib.sha256).digest()
+    return hmac.new(key_service, b"aws4_request", hashlib.sha256).digest()
+
+
+def _cloudflare_r2_test_response(api: ApiConfig, session: requests.Session) -> requests.Response:
+    if not api.cloudflare_r2_access_key_id or not api.cloudflare_r2_secret_access_key or not api.cloudflare_r2_endpoint:
+        raise ValueError("CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY ou CLOUDFLARE_R2_ENDPOINT vazio")
+
+    endpoint = api.cloudflare_r2_endpoint.rstrip("/")
+    parts = urlsplit(endpoint)
+    if not parts.scheme or not parts.netloc:
+        raise ValueError("CLOUDFLARE_R2_ENDPOINT inválido")
+
+    amz_date = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = amz_date[:8]
+    payload_hash = hashlib.sha256(b"").hexdigest()
+    canonical_headers = (
+        f"host:{parts.netloc}\n"
+        f"x-amz-content-sha256:{payload_hash}\n"
+        f"x-amz-date:{amz_date}\n"
+    )
+    signed_headers = "host;x-amz-content-sha256;x-amz-date"
+    canonical_request = "\n".join(["GET", "/", "", canonical_headers, signed_headers, payload_hash])
+    credential_scope = f"{date_stamp}/auto/s3/aws4_request"
+    string_to_sign = "\n".join([
+        "AWS4-HMAC-SHA256",
+        amz_date,
+        credential_scope,
+        hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+    ])
+    signing_key = _aws_signing_key(api.cloudflare_r2_secret_access_key, date_stamp)
+    signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    authorization = (
+        "AWS4-HMAC-SHA256 "
+        f"Credential={api.cloudflare_r2_access_key_id}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, "
+        f"Signature={signature}"
+    )
+    headers = {
+        "Authorization": authorization,
+        "x-amz-content-sha256": payload_hash,
+        "x-amz-date": amz_date,
+    }
+    try:
+        return session.get(endpoint + "/", headers=headers, timeout=25)
+    except requests.exceptions.SSLError as exc:
+        raise ValueError("Falha TLS/SSL no endpoint R2. Confira se CLOUDFLARE_R2_ENDPOINT usa o Account ID correto e se o endpoint S3 do R2 já está ativo.") from exc
 
 
 def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> Dict[str, Any]:
@@ -576,6 +702,35 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
                 json={"url": TEST_URL, "formats": ["markdown"]},
                 timeout=30,
             )
+        elif provider == "Hyperbrowser":
+            if not api.hyperbrowser:
+                raise ValueError("HYPERBROWSER_API_KEY vazio")
+            response = session.get(
+                "https://api.hyperbrowser.ai/api/sessions",
+                params={"status": "active", "page": 1},
+                headers={"x-api-key": api.hyperbrowser, "Accept": "application/json"},
+                timeout=25,
+            )
+        elif provider == "Browserless":
+            if not api.browserless or not api.browserless_endpoint:
+                raise ValueError("BROWSERLESS_TOKEN ou BROWSERLESS_ENDPOINT vazio")
+            endpoint = api.browserless_endpoint.rstrip("/")
+            response = session.post(
+                f"{endpoint}/smart-scrape",
+                params={"token": api.browserless},
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                json={"url": "https://example.com", "formats": ["markdown"]},
+                timeout=35,
+            )
+        elif provider == "Browserbase":
+            if not api.browserbase:
+                raise ValueError("BROWSERBASE_API_KEY vazio")
+            response = session.post(
+                "https://api.browserbase.com/v1/fetch",
+                headers={"X-BB-API-Key": api.browserbase, "Content-Type": "application/json", "Accept": "application/json"},
+                json={"url": "https://example.com", "allowRedirects": True, "format": "raw"},
+                timeout=35,
+            )
         elif provider == "ScrapingAnt":
             if not api.scrapingant:
                 raise ValueError("SCRAPINGANT_KEY vazio")
@@ -584,6 +739,15 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
             if not api.serpapi:
                 raise ValueError("SERPAPI_KEY vazio")
             response = session.get("https://serpapi.com/account", params={"api_key": api.serpapi}, timeout=20)
+        elif provider == "SearchAPI":
+            if not api.searchapi:
+                raise ValueError("SEARCHAPI_KEY vazio")
+            response = session.get(
+                "https://www.searchapi.io/api/v1/me",
+                params={"api_key": api.searchapi},
+                headers={"Accept": "application/json"},
+                timeout=20,
+            )
         elif provider == "Crawlbase":
             if not api.crawlbase:
                 raise ValueError("CRAWLBASE_KEY vazio")
@@ -695,6 +859,19 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
             if not api.roboflow:
                 raise ValueError("ROBOFLOW_API_KEY vazio")
             response = session.get("https://api.roboflow.com/", params={"api_key": api.roboflow}, timeout=20)
+        elif provider == "Cloudflare API Token":
+            if not api.cloudflare_api_token:
+                raise ValueError("CLOUDFLARE_API_TOKEN vazio")
+            verify_url = "https://api.cloudflare.com/client/v4/user/tokens/verify"
+            if api.cloudflare_account_id:
+                verify_url = f"https://api.cloudflare.com/client/v4/accounts/{api.cloudflare_account_id}/tokens/verify"
+            response = session.get(
+                verify_url,
+                headers={"Authorization": f"Bearer {api.cloudflare_api_token}", "Accept": "application/json"},
+                timeout=20,
+            )
+        elif provider == "Cloudflare R2":
+            response = _cloudflare_r2_test_response(api, session)
         elif provider == "Browse AI":
             if not api.browseai:
                 raise ValueError("BROWSEAI_KEY vazio")
@@ -722,13 +899,23 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
         status = f"HTTP {response.status_code}" if response is not None else "sem resposta"
         message = _status_message(response) if response is not None else "sem resposta"
         ok = bool(response is not None and 200 <= response.status_code < 300)
-        save_api_test_result(db_path(), provider, ok, status, message, latency_ms)
-        return {"provider": provider, "ok": ok, "status": status, "message": message, "latency_ms": latency_ms}
+        result = {"provider": provider, "ok": ok, "status": status, "message": message, "latency_ms": latency_ms}
+        try:
+            save_api_test_result(db_path(), provider, ok, status, message, latency_ms)
+        except Exception:
+            pass
+        _remember_api_test_result(result)
+        return result
     except Exception as exc:  # noqa: BLE001
         latency_ms = int((time.perf_counter() - start) * 1000)
         message = str(exc)[:500]
-        save_api_test_result(db_path(), provider, False, "erro", message, latency_ms)
-        return {"provider": provider, "ok": False, "status": "erro", "message": message, "latency_ms": latency_ms}
+        result = {"provider": provider, "ok": False, "status": "erro", "message": message, "latency_ms": latency_ms}
+        try:
+            save_api_test_result(db_path(), provider, False, "erro", message, latency_ms)
+        except Exception:
+            pass
+        _remember_api_test_result(result)
+        return result
 
 
 @app.route("/login", methods=["GET", "POST"])
