@@ -1,7 +1,9 @@
-{% macro run_controls(r, compact=False, show_label=True, show_export=True) %}
+{% macro run_controls(r, compact=False, show_label=True, show_export=True, show_open=True) %}
   <div class="run-control-bar {{ 'compact' if compact else '' }}" data-run-controls="{{ r.id }}">
     {% if show_label %}<span class="control-label"><i class="bi bi-sliders2 me-1"></i>controle</span>{% endif %}
+    {% if show_open %}
     <a class="btn btn-sm btn-outline-primary rounded-pill" href="{{ url_for('run_detail', run_id=r.id) }}" title="Abrir detalhes"><i class="bi bi-eye"></i>{% if not compact %}<span>abrir</span>{% endif %}</a>
+    {% endif %}
     {% if show_export %}
     <a class="btn btn-sm btn-outline-secondary rounded-pill" href="{{ url_for('export_run', run_id=r.id, fmt='html') }}" title="Exportar como HTML"><i class="bi bi-filetype-html"></i>{% if not compact %}<span>html</span>{% endif %}</a>
     <a class="btn btn-sm btn-outline-secondary rounded-pill" href="{{ url_for('export_run', run_id=r.id, fmt='json') }}" title="Exportar como JSON"><i class="bi bi-filetype-json"></i>{% if not compact %}<span>json</span>{% endif %}</a>

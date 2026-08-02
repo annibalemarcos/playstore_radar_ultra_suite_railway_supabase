@@ -2,97 +2,186 @@
 {% from "macros.html" import run_controls %}
 {% block title %}Run #{{ run.id }} · PlayStore Radar Ultra{% endblock %}
 {% block content %}
-<section class="run-hero mb-4">
-  <div class="run-hero-bg"></div>
-  <div class="run-hero-content">
-    <div class="d-flex flex-wrap justify-content-between gap-3 align-items-start">
-      <div>
-        <div class="eyebrow">Run #{{ run.id }}</div>
-        <h1>{{ run.level }} · {{ run.profile }}</h1>
-        <p class="lead mb-0">
-          {{ run.scope }} · {{ run.quantity }} apps/categoria ·
-          <span id="statusText" class="status {{ run.status }}">{{ run.status }}</span>
-        </p>
-      </div>
-      <div class="d-flex flex-wrap gap-2 run-actions">
-        {{ run_controls(run, compact=False, show_label=False, show_export=False) }}
-        <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='html') }}"><i class="bi bi-filetype-html me-1"></i>HTML</a>
-        <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='json') }}"><i class="bi bi-filetype-json me-1"></i>JSON</a>
-        <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='csv') }}"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
-      </div>
-    </div>
-
-    <div class="run-progress-wrap mt-4">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <span class="small fw-bold text-muted">Progresso geral</span>
-        <span class="progress-percent" id="progressPct">{{ ((run.categories_done or 0) * 100 / (run.categories_total or 1))|round(1) }}%</span>
-      </div>
-      <div class="progress progress-soft"><div id="bar" class="progress-bar" style="width: {{ ((run.categories_done or 0) * 100 / (run.categories_total or 1))|round(1) }}%"></div></div>
-      <div class="small text-muted mt-2" id="lastMessage">{{ run.last_message }}</div>
-    </div>
-  </div>
-</section>
-
-<section class="console-card mb-4">
-  <div class="console-head">
+{% set cfg = run_summary.cfg %}
+<section class="run-overview mb-3">
+  <div class="run-title-area">
     <div>
-      <div class="eyebrow">Progresso da coleta</div>
-      <h2 class="mb-0">Console ao vivo</h2>
+      <div class="eyebrow">coleta</div>
+      <h1>Run #{{ run.id }}</h1>
+      <div class="run-subtitle">{{ run.level }} · {{ run.profile }}</div>
+      <p class="run-meta-line mb-0">
+        {{ run.scope }} · {{ run.quantity }} apps/categoria ·
+        <span id="statusText" class="status {{ run.status }}">{{ run.status }}</span>
+      </p>
     </div>
-    <div class="console-meta">
-      <span class="job-pill"><i class="bi bi-cpu me-1"></i>Job: #{{ '%08x'|format(run.id * 2654435761 % 4294967295) }} · {{ run.created_at }}</span>
-      <button class="btn btn-sm btn-ghost-light rounded-pill" id="copyLogs" type="button"><i class="bi bi-copy me-1"></i>copiar</button>
-      <button class="btn btn-sm btn-ghost-light rounded-pill active" id="autoScrollBtn" type="button"><i class="bi bi-arrow-down-circle me-1"></i>auto-scroll</button>
+    <div class="run-actions">
+      {{ run_controls(run, compact=False, show_label=False, show_export=False, show_open=False) }}
+      <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='html') }}"><i class="bi bi-filetype-html me-1"></i>HTML</a>
+      <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='json') }}"><i class="bi bi-filetype-json me-1"></i>JSON</a>
+      <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='csv') }}"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
     </div>
   </div>
 
-  <div class="console-stats">
-    <div><b id="appsKept">{{ run.apps_kept }}</b><span>apps salvos</span></div>
-    <div><b id="appsScanned">{{ run.apps_scanned }}</b><span>escaneados</span></div>
-    <div><b id="catsDone">{{ run.categories_done }}/{{ run.categories_total }}</b><span>categorias</span></div>
-    <div><b id="errorsCount">{{ run.errors_count }}</b><span>alertas/erros</span></div>
+  <div class="run-context-strip">
+    <span>{{ run_summary.search_mode }}</span>
+    <b>{{ run_summary.main_context }}</b>
+    <small>{{ run_summary.filter_context }}</small>
   </div>
 
-  <div class="console-shell" id="consoleShell">
-    <div class="console-glow"></div>
-    <div class="terminal-topbar">
-      <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
-      <span class="terminal-title">playstore-radar://run/{{ run.id }}</span>
+  <div class="run-metrics-bar">
+    <div>
+      <span>progresso</span>
+      <b id="progressPct">{{ run_summary.progress_pct }}%</b>
     </div>
-    <div id="logs" class="terminal-body" aria-live="polite">
-      {% for l in logs %}
-        <div class="terminal-line {{ l.level }}">
-          <span class="terminal-time">{{ l.created_at }}</span>
-          <span class="terminal-icon"></span>
-          <span class="terminal-message">{{ l.message }}</span>
-        </div>
-      {% else %}
-        <div class="terminal-line info"><span class="terminal-time">{{ run.created_at }}</span><span class="terminal-icon"></span><span class="terminal-message">Aguardando logs da coleta...</span></div>
-      {% endfor %}
+    <div>
+      <span>apps salvos</span>
+      <b id="appsKept">{{ run.apps_kept or 0 }}</b>
     </div>
+    <div>
+      <span>escaneados</span>
+      <b id="appsScanned">{{ run.apps_scanned or 0 }}</b>
+    </div>
+    <div>
+      <span>categorias</span>
+      <b id="catsDone">{{ run.categories_done or 0 }}/{{ run.categories_total or 0 }}</b>
+    </div>
+    <div>
+      <span>alertas/erros</span>
+      <b id="errorsCount">{{ run.errors_count or 0 }}</b>
+    </div>
+  </div>
+
+  <div class="run-progress-wrap">
+    <div class="progress progress-soft">
+      <div id="bar" class="progress-bar" style="width: {{ run_summary.progress_pct }}%"></div>
+    </div>
+    <div class="small text-muted mt-2" id="lastMessage">{{ run.last_message or 'Na fila' }}</div>
   </div>
 </section>
 
-<div class="row g-4">
-  <div class="col-12">
-    <div class="card-soft p-4">
-      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <div>
-          <h2 class="section-title mb-1">Apps salvos</h2>
-          <p class="text-muted mb-0 small">Atualiza sozinho enquanto o robô caça oportunidades. Sem precisar apertar F5 igual ritual antigo.</p>
+<div class="accordion run-accordion" id="runDetailAccordion">
+  <section class="accordion-item">
+    <h2 class="accordion-header" id="runSummaryHead">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#runSummaryPanel" aria-expanded="true" aria-controls="runSummaryPanel">
+        <span><i class="bi bi-sliders2 me-2"></i>Resumo da busca</span>
+        <em>{{ run_summary.search_mode }}</em>
+      </button>
+    </h2>
+    <div id="runSummaryPanel" class="accordion-collapse collapse show" aria-labelledby="runSummaryHead">
+      <div class="accordion-body">
+        <div class="run-summary-layout">
+          <div class="run-detail-list">
+            {% for row in run_summary.detail_rows %}
+              <div>
+                <span>{{ row.label }}</span>
+                <b>{{ row.value }}</b>
+              </div>
+            {% endfor %}
+            <div>
+              <span>Criado em</span>
+              <b>{{ run.created_at or '-' }}</b>
+            </div>
+            <div>
+              <span>Iniciado em</span>
+              <b>{{ run.started_at or '-' }}</b>
+            </div>
+            <div>
+              <span>Finalizado em</span>
+              <b>{{ run.finished_at or '-' }}</b>
+            </div>
+          </div>
+
+          <div class="run-targets-box">
+            <div class="run-targets-head">
+              <span>alvos efetivos</span>
+              <b>{{ 1 if cfg.search_query else run_summary.target_categories|length }}</b>
+            </div>
+            <div class="run-target-list">
+              {% if cfg.search_query %}
+                <span class="target-chip keyword"><i class="bi bi-search"></i>{{ cfg.search_query }}</span>
+              {% else %}
+                {% for target in run_summary.target_preview %}
+                  <span class="target-chip" title="{{ target.term }}"><i class="bi bi-tag"></i>{{ target.name }} <small>{{ target.code }}</small></span>
+                {% else %}
+                  <span class="target-chip muted">nenhum alvo calculado</span>
+                {% endfor %}
+                {% if run_summary.target_more_count %}
+                  <span class="target-chip muted">+{{ run_summary.target_more_count }}</span>
+                {% endif %}
+              {% endif %}
+            </div>
+          </div>
         </div>
-        <a href="{{ url_for('apps_page', run_id=run.id) }}" class="btn btn-sm btn-light rounded-pill"><i class="bi bi-table me-1"></i>abrir tabela</a>
-      </div>
-      <div class="table-responsive live-app-table-wrap">
-        <table class="table table-hover align-middle apps-table compact-app-table mb-0">
-          <thead><tr><th>App</th><th>Categoria</th><th>Nota</th><th>Installs</th><th>Scores</th><th>Receita/mês</th><th>Conf.</th><th></th></tr></thead>
-          <tbody id="appsGrid">
-            {% for a in apps %}{% include "partials_app_table_row.html" %}{% else %}<tr><td colspan="8" class="text-muted empty-apps">Ainda nenhum app salvo. Se a coleta está rodando, daqui a pouco pinta coisa aqui.</td></tr>{% endfor %}
-          </tbody>
-        </table>
       </div>
     </div>
-  </div>
+  </section>
+
+  <section class="accordion-item">
+    <h2 class="accordion-header" id="runConsoleHead">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#runConsolePanel" aria-expanded="true" aria-controls="runConsolePanel">
+        <span><i class="bi bi-terminal me-2"></i>Console ao vivo</span>
+        <em>{{ logs|length }} logs</em>
+      </button>
+    </h2>
+    <div id="runConsolePanel" class="accordion-collapse collapse show" aria-labelledby="runConsoleHead">
+      <div class="accordion-body">
+        <div class="console-toolbar">
+          <span class="job-pill"><i class="bi bi-cpu me-1"></i>Job #{{ '%08x'|format(run.id * 2654435761 % 4294967295) }} · {{ run.created_at }}</span>
+          <div class="console-tools">
+            <button class="btn btn-sm btn-ghost-light rounded-pill" id="copyLogs" type="button"><i class="bi bi-copy me-1"></i>copiar</button>
+            <button class="btn btn-sm btn-ghost-light rounded-pill active" id="autoScrollBtn" type="button"><i class="bi bi-arrow-down-circle me-1"></i>auto-scroll</button>
+          </div>
+        </div>
+
+        <div class="console-shell" id="consoleShell">
+          <div class="console-glow"></div>
+          <div class="terminal-topbar">
+            <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+            <span class="terminal-title">playstore-radar://run/{{ run.id }}</span>
+          </div>
+          <div id="logs" class="terminal-body" aria-live="polite">
+            {% for l in logs %}
+              <div class="terminal-line {{ l.level }}">
+                <span class="terminal-time">{{ l.created_at }}</span>
+                <span class="terminal-icon"></span>
+                <span class="terminal-message">{{ l.message }}</span>
+              </div>
+            {% else %}
+              <div class="terminal-line info"><span class="terminal-time">{{ run.created_at }}</span><span class="terminal-icon"></span><span class="terminal-message">Aguardando logs da coleta...</span></div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="accordion-item">
+    <h2 class="accordion-header" id="runAppsHead">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#runAppsPanel" aria-expanded="false" aria-controls="runAppsPanel">
+        <span><i class="bi bi-table me-2"></i>Apps salvos</span>
+        <em id="appsAccordionCount">{{ apps|length }} apps</em>
+      </button>
+    </h2>
+    <div id="runAppsPanel" class="accordion-collapse collapse" aria-labelledby="runAppsHead">
+      <div class="accordion-body">
+        <div class="run-table-head">
+          <div>
+            <h2 class="section-title mb-1">Apps salvos</h2>
+            <p class="text-muted mb-0 small">Run #{{ run.id }} · {{ run.level }} · {{ run.profile }}</p>
+          </div>
+          <a href="{{ url_for('apps_page', run_id=run.id) }}" class="btn btn-sm btn-light rounded-pill"><i class="bi bi-table me-1"></i>abrir tabela</a>
+        </div>
+        <div class="table-responsive live-app-table-wrap">
+          <table class="table table-hover align-middle apps-table compact-app-table mb-0">
+            <thead><tr><th>App</th><th>Categoria</th><th>Nota</th><th>Installs</th><th>Scores</th><th>Receita/mês</th><th>Conf.</th><th></th></tr></thead>
+            <tbody id="appsGrid">
+              {% for a in apps %}{% include "partials_app_table_row.html" %}{% else %}<tr><td colspan="8" class="text-muted empty-apps">Ainda nenhum app salvo.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -103,8 +192,8 @@ let appsRefreshToggle = 0;
 
 function escapeHtml(s){return (s||'').toString().replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function logIcon(level){
-  const map = {error:'🔥', warning:'⚠️', debug:'🧪', success:'✅', info:'🔎'};
-  return map[level] || '•';
+  const map = {error:'ERR', warning:'WARN', debug:'DBG', success:'OK', info:'INFO'};
+  return map[level] || 'LOG';
 }
 function normalizeNumber(n){return Number(n || 0).toLocaleString('pt-BR');}
 
@@ -116,7 +205,7 @@ function renderLogs(logs){
       <span class="terminal-icon">${logIcon(l.level)}</span>
       <span class="terminal-message">${escapeHtml(l.message || '')}</span>
     </div>`).join('');
-  box.innerHTML = html || `<div class="terminal-line info"><span class="terminal-time"></span><span class="terminal-icon">🕯️</span><span class="terminal-message">Sem logs ainda...</span></div>`;
+  box.innerHTML = html || `<div class="terminal-line info"><span class="terminal-time"></span><span class="terminal-icon">INFO</span><span class="terminal-message">Sem logs ainda...</span></div>`;
   if(autoScroll) box.scrollTop = box.scrollHeight;
 }
 
@@ -124,15 +213,15 @@ function appCard(a){
   const icon = a.icon ? `<img class="tiny-icon" src="${escapeHtml(a.icon)}" alt="ícone" loading="lazy">` : `<div class="tiny-icon app-placeholder">?</div>`;
   const title = escapeHtml(a.title || 'Sem título');
   const dev = escapeHtml(a.developer || 'Dev não informado');
-  const cat = escapeHtml(a.categoria || a.genre || '—');
+  const cat = escapeHtml(a.categoria || a.genre || '-');
   const score = escapeHtml(a.score || 'N/A');
-  const installs = escapeHtml(a.real_installs || a.min_installs || a.installs || '—');
+  const installs = escapeHtml(a.real_installs || a.min_installs || a.installs || '-');
   const opp = escapeHtml(a.opportunity_score ?? 0);
   const grow = escapeHtml(a.growth_score ?? 0);
   const indie = escapeHtml(a.indie_score ?? 0);
   const rev = normalizeNumber(a.revenue_monthly_usd_base || 0);
   const profit = normalizeNumber(a.profit_monthly_usd_base || 0);
-  const conf = escapeHtml(a.financial_confidence || '—');
+  const conf = escapeHtml(a.financial_confidence || '-');
   return `<tr class="compact-app-row">
     <td class="app-cell"><div class="d-flex gap-2 align-items-center">${icon}<div class="min-w-0"><b class="app-row-title">${title}</b><br><span class="text-muted small text-truncate d-block">${dev}</span></div></div></td>
     <td>${cat}</td><td>${score}</td><td>${installs}</td>
@@ -148,7 +237,9 @@ async function refreshApps(){
   const data = await res.json();
   const grid = document.querySelector('#appsGrid');
   if(!data || !Array.isArray(data.apps)) return;
-  grid.innerHTML = data.apps.length ? data.apps.map(appCard).join('') : `<tr><td colspan="8" class="text-muted empty-apps">Ainda nenhum app salvo. Se a coleta está rodando, daqui a pouco pinta coisa aqui.</td></tr>`;
+  grid.innerHTML = data.apps.length ? data.apps.map(appCard).join('') : `<tr><td colspan="8" class="text-muted empty-apps">Ainda nenhum app salvo.</td></tr>`;
+  const count = document.querySelector('#appsAccordionCount');
+  if(count) count.textContent = `${normalizeNumber(data.apps.length)} apps`;
 }
 
 async function pollRun(){
