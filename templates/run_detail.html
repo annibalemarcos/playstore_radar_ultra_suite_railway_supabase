@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% from "macros.html" import run_controls %}
+{% block title %}Run #{{ run.id }} · PlayStore Radar Ultra{% endblock %}
+{% block content %}
+<section class="run-hero mb-4">
+  <div class="run-hero-bg"></div>
+  <div class="run-hero-content">
+    <div class="d-flex flex-wrap justify-content-between gap-3 align-items-start">
+      <div>
+        <div class="eyebrow">Run #{{ run.id }}</div>
+        <h1>{{ run.level }} · {{ run.profile }}</h1>
+        <p class="lead mb-0">
+          {{ run.scope }} · {{ run.quantity }} apps/categoria ·
+          <span id="statusText" class="status {{ run.status }}">{{ run.status }}</span>
+        </p>
+      </div>
+      <div class="d-flex flex-wrap gap-2 run-actions">
+        {{ run_controls(run, compact=False, show_label=False, show_export=False) }}
+        <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='html') }}"><i class="bi bi-filetype-html me-1"></i>HTML</a>
+        <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='json') }}"><i class="bi bi-filetype-json me-1"></i>JSON</a>
+        <a class="btn btn-light rounded-pill" href="{{ url_for('export_run', run_id=run.id, fmt='csv') }}"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+      </div>
+    </div>
+
+    <div class="run-progress-wrap mt-4">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="small fw-bold text-muted">Progresso geral</span>
+        <span class="progress-percent" id="progressPct">{{ ((run.categories_done or 0) * 100 / (run.categories_total or 1))|round(1) }}%</span>
+      </div>
+      <div class="progress progress-soft"><div id="bar" class="progress-bar" style="width: {{ ((run.categories_done or 0) * 100 / (run.categories_total or 1))|round(1) }}%"></div></div>
+      <div class="small text-muted mt-2" id="lastMessage">{{ run.last_message }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="console-card mb-4">
+  <div class="console-head">
+    <div>
+      <div class="eyebrow">Progresso da coleta</div>
+      <h2 class="mb-0">Console ao vivo</h2>
+    </div>
+    <div class="console-meta">
+      <span class="job-pill"><i class="bi bi-cpu me-1"></i>Job: #{{ '%08x'|format(run.id * 2654435761 % 4294967295) }} · {{ run.created_at }}</span>
+      <button class="btn btn-sm btn-ghost-light rounded-pill" id="copyLogs" type="button"><i class="bi bi-copy me-1"></i>copiar</button>
+      <button class="btn btn-sm btn-ghost-light rounded-pill active" id="autoScrollBtn" type="button"><i class="bi bi-arrow-down-circle me-1"></i>auto-scroll</button>
+    </div>
+  </div>
+
+  <div class="console-stats">
+    <div><b id="appsKept">{{ run.apps_kept }}</b><span>apps salvos</span></div>
+    <div><b id="appsScanned">{{ run.apps_scanned }}</b><span>escaneados</span></div>
+    <div><b id="catsDone">{{ run.categories_done }}/{{ run.categories_total }}</b><span>categorias</span></div>
+    <div><b id="errorsCount">{{ run.errors_count }}</b><span>alertas/erros</span></div>
+  </div>
+
+  <div class="console-shell" id="consoleShell">
+    <div class="console-glow"></div>
+    <div class="terminal-topbar">
+      <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+      <span class="terminal-title">playstore-radar://run/{{ run.id }}</span>
+    </div>
+    <div id="logs" class="terminal-body" aria-live="polite">
+      {% for l in logs %}
+        <div class="terminal-line {{ l.level }}">
+          <span class="terminal-time">{{ l.created_at }}</span>
+          <span class="terminal-icon"></span>
+          <span class="terminal-message">{{ l.message }}</span>
+        </div>
+      {% else %}
+        <div class="terminal-line info"><span class="terminal-time">{{ run.created_at }}</span><span class="terminal-icon"></span><span class="terminal-message">Aguardando logs da coleta...</span></div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<div class="row g-4">
+  <div class="col-12">
+    <div class="card-soft p-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+          <h2 class="section-title mb-1">Apps salvos</h2>
+          <p class="text-muted mb-0 small">Atualiza sozinho enquanto o robô caça oportunidades. Sem precisar apertar F5 igual ritual antigo.</p>
+        </div>
+        <a href="{{ url_for('apps_page', run_id=run.id) }}" class="btn btn-sm btn-light rounded-pill"><i class="bi bi-table me-1"></i>abrir tabela</a>
+      </div>
+      <div class="table-responsive live-app-table-wrap">
+        <table class="table table-hover align-middle apps-table compact-app-table mb-0">
+          <thead><tr><th>App</th><th>Categoria</th><th>Nota</th><th>Installs</th><th>Scores</th><th>Receita/mês</th><th>Conf.</th><th></th></tr></thead>
+          <tbody id="appsGrid">
+            {% for a in apps %}{% include "partials_app_table_row.html" %}{% else %}<tr><td colspan="8" class="text-muted empty-apps">Ainda nenhum app salvo. Se a coleta está rodando, daqui a pouco pinta coisa aqui.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const runId = {{ run.id }};
+let autoScroll = true;
+let appsRefreshToggle = 0;
+
+function escapeHtml(s){return (s||'').toString().replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+function logIcon(level){
+  const map = {error:'🔥', warning:'⚠️', debug:'🧪', success:'✅', info:'🔎'};
+  return map[level] || '•';
+}
+function normalizeNumber(n){return Number(n || 0).toLocaleString('pt-BR');}
+
+function renderLogs(logs){
+  const box = document.querySelector('#logs');
+  const html = (logs || []).map(l => `
+    <div class="terminal-line ${escapeHtml(l.level || 'info')}">
+      <span class="terminal-time">${escapeHtml(l.created_at || '')}</span>
+      <span class="terminal-icon">${logIcon(l.level)}</span>
+      <span class="terminal-message">${escapeHtml(l.message || '')}</span>
+    </div>`).join('');
+  box.innerHTML = html || `<div class="terminal-line info"><span class="terminal-time"></span><span class="terminal-icon">🕯️</span><span class="terminal-message">Sem logs ainda...</span></div>`;
+  if(autoScroll) box.scrollTop = box.scrollHeight;
+}
+
+function appCard(a){
+  const icon = a.icon ? `<img class="tiny-icon" src="${escapeHtml(a.icon)}" alt="ícone" loading="lazy">` : `<div class="tiny-icon app-placeholder">?</div>`;
+  const title = escapeHtml(a.title || 'Sem título');
+  const dev = escapeHtml(a.developer || 'Dev não informado');
+  const cat = escapeHtml(a.categoria || a.genre || '—');
+  const score = escapeHtml(a.score || 'N/A');
+  const installs = escapeHtml(a.real_installs || a.min_installs || a.installs || '—');
+  const opp = escapeHtml(a.opportunity_score ?? 0);
+  const grow = escapeHtml(a.growth_score ?? 0);
+  const indie = escapeHtml(a.indie_score ?? 0);
+  const rev = normalizeNumber(a.revenue_monthly_usd_base || 0);
+  const profit = normalizeNumber(a.profit_monthly_usd_base || 0);
+  const conf = escapeHtml(a.financial_confidence || '—');
+  return `<tr class="compact-app-row">
+    <td class="app-cell"><div class="d-flex gap-2 align-items-center">${icon}<div class="min-w-0"><b class="app-row-title">${title}</b><br><span class="text-muted small text-truncate d-block">${dev}</span></div></div></td>
+    <td>${cat}</td><td>${score}</td><td>${installs}</td>
+    <td><span class="chip">opp ${opp}</span> <span class="chip">grow ${grow}</span> <span class="chip">indie ${indie}</span></td>
+    <td>US$ ${rev}<br><span class="text-muted small">lucro US$ ${profit}</span></td>
+    <td><span class="status small-status">${conf}</span></td>
+    <td><a class="btn btn-sm btn-outline-primary rounded-pill" href="/app/${a.id}">abrir</a></td>
+  </tr>`;
+}
+
+async function refreshApps(){
+  const res = await fetch(`/api/run/${runId}/apps`);
+  const data = await res.json();
+  const grid = document.querySelector('#appsGrid');
+  if(!data || !Array.isArray(data.apps)) return;
+  grid.innerHTML = data.apps.length ? data.apps.map(appCard).join('') : `<tr><td colspan="8" class="text-muted empty-apps">Ainda nenhum app salvo. Se a coleta está rodando, daqui a pouco pinta coisa aqui.</td></tr>`;
+}
+
+async function pollRun(){
+  const res = await fetch(`/api/run/${runId}/status`);
+  const data = await res.json();
+  if(!data || !data.id) return;
+  const pct = data.progress_pct || 0;
+  document.querySelector('#statusText').textContent = data.status;
+  document.querySelector('#statusText').className = `status ${data.status}`;
+  document.querySelector('#bar').style.width = `${pct}%`;
+  document.querySelector('#progressPct').textContent = `${pct}%`;
+  document.querySelector('#appsKept').textContent = normalizeNumber(data.apps_kept);
+  document.querySelector('#appsScanned').textContent = normalizeNumber(data.apps_scanned);
+  document.querySelector('#catsDone').textContent = `${data.categories_done || 0}/${data.categories_total || 0}`;
+  document.querySelector('#errorsCount').textContent = normalizeNumber(data.errors_count);
+  document.querySelector('#lastMessage').textContent = data.last_message || '';
+  renderLogs(data.logs || []);
+  appsRefreshToggle++;
+  if(appsRefreshToggle % 2 === 0 || (data.apps_kept || 0) > 0) refreshApps();
+  if(['queued','running','pause_requested','paused','cancel_requested','delete_requested','restart_requested'].includes(data.status)) setTimeout(pollRun, 1600);
+  else refreshApps();
+}
+
+document.querySelector('#autoScrollBtn').addEventListener('click', () => {
+  autoScroll = !autoScroll;
+  document.querySelector('#autoScrollBtn').classList.toggle('active', autoScroll);
+});
+document.querySelector('#copyLogs').addEventListener('click', async () => {
+  const text = [...document.querySelectorAll('.terminal-line')].map(line => line.innerText).join('\n');
+  await navigator.clipboard.writeText(text);
+  const btn = document.querySelector('#copyLogs');
+  const old = btn.innerHTML;
+  btn.innerHTML = '<i class="bi bi-check2 me-1"></i>copiado';
+  setTimeout(() => btn.innerHTML = old, 1200);
+});
+
+pollRun();
+</script>
+{% endblock %}

@@ -1,0 +1,17 @@
+@echo off
+title Playstore_Radar_Ultra_Suite
+mode con: cols=68 lines=14
+chcp 65001 >nul
+cd /d "%~dp0"
+echo Recriando .venv do zero...
+if exist ".venv" rmdir /s /q ".venv"
+call _bootstrap_venv.bat
+if errorlevel 1 (
+    echo.
+    echo Reparo falhou. Veja o erro acima.
+    pause
+    exit /b 1
+)
+echo.
+echo Reparo concluido. Agora rode rodar_web.bat ou rodar_terminal.bat
+pause

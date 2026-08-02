@@ -1,0 +1,22 @@
+<tr class="compact-app-row">
+  <td class="app-cell">
+    <div class="d-flex gap-2 align-items-center">
+      {% if a.icon %}<img class="tiny-icon" src="{{ a.icon }}" alt="Ícone">{% else %}<div class="tiny-icon app-placeholder">?</div>{% endif %}
+      <div class="min-w-0">
+        <b class="app-row-title">{{ a.title or 'Sem título' }}</b><br>
+        <span class="text-muted small text-truncate d-block">{{ a.developer or 'Dev não informado' }}</span>
+      </div>
+    </div>
+  </td>
+  <td>{{ a.categoria or a.genre or '—' }}</td>
+  <td>{{ a.score or 'N/A' }}</td>
+  <td>{{ a.real_installs or a.min_installs or a.installs or '—' }}</td>
+  <td>
+    <span class="chip">opp {{ a.opportunity_score or 0 }}</span>
+    <span class="chip">grow {{ a.growth_score or 0 }}</span>
+    <span class="chip">indie {{ a.indie_score or 0 }}</span>
+  </td>
+  <td>US$ {{ '%.0f'|format(a.revenue_monthly_usd_base or 0) }}<br><span class="text-muted small">lucro US$ {{ '%.0f'|format(a.profit_monthly_usd_base or 0) }}</span></td>
+  <td><span class="status small-status {{ a.financial_confidence or '' }}">{{ a.financial_confidence or '—' }}</span></td>
+  <td><a class="btn btn-sm btn-outline-primary rounded-pill" href="{{ url_for('app_detail', app_pk=a.id) }}">abrir</a></td>
+</tr>

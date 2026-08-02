@@ -1,0 +1,10 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+*.log
+playstore_radar_outputs/
+data/*.db
+data/*.db-*
+data/.session_secret
+data/api_settings.json

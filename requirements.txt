@@ -1,0 +1,8 @@
+Flask==3.0.3
+google-play-scraper==1.2.7
+rich==13.9.4
+requests==2.32.3
+beautifulsoup4==4.12.3
+python-dotenv==1.0.1
+gunicorn>=23.0,<24.0
+psycopg[binary]>=3.2,<4.0

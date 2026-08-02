@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Configurações · PlayStore Radar Ultra{% endblock %}
+{% block content %}
+<section class="settings-hero card-soft p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+    <div>
+      <div class="eyebrow">painel de controle</div>
+      <h1 class="page-title mb-2">Configurações de APIs</h1>
+      <p class="text-muted mb-0">Chaves por grupos: scraping/render, busca, IA, embeddings/visão e automações. Se o <code>.env</code> tiver valor, ele continua mandando no jogo.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <form method="post" action="{{ url_for('test_all_apis_route') }}">
+        <button class="btn btn-primary rounded-pill px-4" type="submit"><i class="bi bi-plug me-1"></i> Testar todas configuradas</button>
+      </form>
+      <a class="btn btn-light rounded-pill px-4" href="{{ url_for('index') }}">Voltar</a>
+    </div>
+  </div>
+</section>
+
+<div class="row g-4">
+  <div class="col-xxl-5">
+    <div class="card-soft p-4 sticky-settings">
+      <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+        <div>
+          <div class="eyebrow">chaves</div>
+          <h2 class="section-title mb-0">Credenciais por grupo</h2>
+        </div>
+        <span class="badge rounded-pill text-bg-light">.env &gt; painel</span>
+      </div>
+
+      <form method="post" action="{{ url_for('save_api_settings_route') }}" class="api-settings-form">
+        <div class="accordion settings-accordion" id="apiGroupsAccordion">
+          {% for group, group_fields in fields_by_group.items() %}
+          <div class="accordion-item api-group-item">
+            <h2 class="accordion-header">
+              <button class="accordion-button {{ '' if loop.first else 'collapsed' }}" type="button" data-bs-toggle="collapse" data-bs-target="#group{{ loop.index }}">
+                <span>{{ group }}</span>
+                <em>{{ group_fields|length }} campos</em>
+              </button>
+            </h2>
+            <div id="group{{ loop.index }}" class="accordion-collapse collapse {{ 'show' if loop.first else '' }}" data-bs-parent="#apiGroupsAccordion">
+              <div class="accordion-body">
+                {% for field in group_fields %}
+                  <div class="api-field-row">
+                    <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                      <label class="form-label mb-0" for="api_{{ field.attr }}">{{ field.label }}</label>
+                      <span class="source-pill {{ field.source_slug }}">{{ field.source }}</span>
+                    </div>
+                    <input
+                      id="api_{{ field.attr }}"
+                      name="{{ field.attr }}"
+                      class="form-control rounded-4"
+                      type="{{ 'password' if field.is_secret else 'text' }}"
+                      value="{{ field.value }}"
+                      placeholder="{{ field.placeholder }}"
+                      autocomplete="off"
+                    >
+                    {% if field.is_env %}
+                      <div class="form-hint mt-1">Valor vindo do <code>.env</code>. Salvar no painel não apaga nem substitui esse valor.</div>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap mt-4">
+          <button class="btn btn-primary rounded-pill px-4" type="submit"><i class="bi bi-save me-1"></i> Salvar configurações</button>
+          <a class="btn btn-light rounded-pill px-4" href="{{ url_for('index') }}">Voltar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-xxl-7">
+    <div class="api-group-stack">
+      {% for group, group_cards in cards_by_group.items() %}
+        <section class="card-soft p-3 api-group-section">
+          <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+            <div>
+              <div class="eyebrow">grupo</div>
+              <h2 class="section-title mb-0">{{ group }}</h2>
+            </div>
+            <span class="badge rounded-pill text-bg-light">{{ group_cards|selectattr('configured')|list|length }}/{{ group_cards|length }} ativos</span>
+          </div>
+          <div class="api-card-grid">
+            {% for card in group_cards %}
+              <article class="api-status-card {{ 'configured' if card.configured else '' }}">
+                <div class="api-card-top">
+                  <div>
+                    <h3>{{ card.provider }}</h3>
+                    <span class="text-muted">Fonte: {{ card.sources }}</span>
+                  </div>
+                  <span class="status-dot {{ 'ok' if card.configured else 'off' }}"></span>
+                </div>
+                <div class="api-metrics">
+                  <div><b>{{ card.usage.call_estimate or 0 }}</b><span>uso local</span></div>
+                  <div><b>{{ card.usage.apps_enriched or 0 }}</b><span>apps enriquecidos</span></div>
+                  <div><b>{{ card.usage.share_pct or 0 }}%</b><span>do banco</span></div>
+                </div>
+                <div class="api-test-line">
+                  {% if card.test %}
+                    <span class="test-badge {{ 'ok' if card.test.ok else 'bad' }}">{{ 'OK' if card.test.ok else 'falhou' }}</span>
+                    <span>{{ card.test.status }} · {{ card.test.latency_ms or 0 }}ms</span>
+                    <small>{{ card.test.created_at }}</small>
+                    <em>{{ card.test.message }}</em>
+                  {% else %}
+                    <span class="test-badge idle">sem teste</span>
+                    <span>Nenhum teste registrado ainda.</span>
+                  {% endif %}
+                </div>
+                <form method="post" action="{{ url_for('test_api_route', provider=card.provider|replace(' ', '_')) }}" class="mt-3">
+                  <button class="btn btn-sm {{ 'btn-outline-primary' if card.configured else 'btn-outline-secondary' }} rounded-pill" type="submit" {{ '' if card.configured else 'disabled' }}>
+                    <i class="bi bi-wifi me-1"></i> Testar conexão
+                  </button>
+                </form>
+              </article>
+            {% endfor %}
+          </div>
+        </section>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

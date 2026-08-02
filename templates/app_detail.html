@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}{{ app.title }} · PlayStore Radar Ultra{% endblock %}
+{% block content %}
+<section class="app-page-v4">
+  <div class="app-hero compact mb-4">
+    <div class="d-flex gap-3 align-items-center flex-wrap">
+      {% if app.icon %}<img class="big-icon" src="{{ app.icon }}" alt="Ícone de {{ app.title }}">{% endif %}
+      <div class="flex-grow-1 min-w-0">
+        <div class="eyebrow">{{ app.categoria }} · {{ app.perfil_detectado }}</div>
+        <h1>{{ app.title }}</h1>
+        <p class="lead mb-2 text-truncate">{{ app.developer }} · <a href="{{ app.url }}" target="_blank">abrir na Play Store</a></p>
+        <div class="d-flex gap-2 flex-wrap">
+          <span class="hero-chip">Run #{{ app.run_id }}</span>
+          <span class="hero-chip">{{ app.created_at or app.run_created_at or 'sem data' }}</span>
+          {% if view.sources %}<span class="hero-chip">{{ view.sources|join(', ') }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="d-flex gap-2 flex-wrap ms-auto">
+        <a class="btn btn-sm btn-light rounded-pill" href="{{ url_for('apps_page', run_id=app.run_id, order='created_at') }}"><i class="bi bi-collection me-1"></i> mesma pesquisa</a>
+        <a class="btn btn-sm btn-outline-primary rounded-pill" href="{{ app.url }}" target="_blank"><i class="bi bi-box-arrow-up-right me-1"></i> Play Store</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 align-items-start">
+    <aside class="col-xl-3">
+      <div class="app-side-stack">
+        <div class="card-soft p-3">
+          <div class="mini-score-grid">
+            <div><b>{{ app.opportunity_score or 0 }}</b><span>oportunidade</span></div>
+            <div><b>{{ app.growth_score or 0 }}</b><span>crescimento</span></div>
+            <div><b>{{ app.indie_score or 0 }}</b><span>indie</span></div>
+            <div><b>{{ app.score or 'N/A' }}</b><span>nota</span></div>
+          </div>
+        </div>
+        <div class="card-soft p-3">
+          <h2 class="section-title small-title">Ficha rápida</h2>
+          <div class="fact-list compact-facts">
+            {% for label, value in view.facts %}
+              <div><span>{{ label }}</span><b>{{ value }}</b></div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="card-soft p-3">
+          <h2 class="section-title small-title">Financeiro</h2>
+          <div class="fact-list compact-facts money-list">
+            {% for label, value in view.financial %}
+              <div><span>{{ label }}</span><b>{{ value }}</b></div>
+            {% endfor %}
+          </div>
+          <p class="text-muted small mt-2 mb-0">{{ app.financial_notes or 'Sem observações financeiras adicionais.' }}</p>
+        </div>
+      </div>
+    </aside>
+
+    <div class="col-xl-9">
+      <div class="card-soft p-0 overflow-hidden app-workbench">
+        <div class="app-tabs-head">
+          <ul class="nav nav-pills app-tabs" id="appDetailTabs" role="tablist">
+            <li class="nav-item" role="presentation"><button class="nav-link active" id="overview-tab" data-bs-toggle="pill" data-bs-target="#overview-pane" type="button" role="tab">Resumo</button></li>
+            <li class="nav-item" role="presentation"><button class="nav-link" id="desc-tab" data-bs-toggle="pill" data-bs-target="#desc-pane" type="button" role="tab">Descrição</button></li>
+            <li class="nav-item" role="presentation"><button class="nav-link" id="reviews-tab" data-bs-toggle="pill" data-bs-target="#reviews-pane" type="button" role="tab">Reviews</button></li>
+            <li class="nav-item" role="presentation"><button class="nav-link" id="media-tab" data-bs-toggle="pill" data-bs-target="#media-pane" type="button" role="tab">Mídia</button></li>
+            <li class="nav-item" role="presentation"><button class="nav-link" id="tech-tab" data-bs-toggle="pill" data-bs-target="#tech-pane" type="button" role="tab">Técnico</button></li>
+          </ul>
+        </div>
+
+        <div class="tab-content app-tabs-body">
+          <div class="tab-pane fade show active" id="overview-pane" role="tabpanel" tabindex="0">
+            <div class="readable-card app-panel-section">
+              <div class="eyebrow">leitura humana</div>
+              <h2 class="section-title">O que esse app parece ser</h2>
+              <p class="preserve human-summary mb-3">{{ view.human_summary }}</p>
+              {% if view.keywords %}
+                <div class="chip-cloud">
+                  {% for k in view.keywords %}<span class="chip strong">{{ k }}</span>{% endfor %}
+                </div>
+              {% endif %}
+            </div>
+
+            {% if view.ai_brief %}
+            <div class="readable-card app-panel-section mt-3 ai-brief-card">
+              <div class="eyebrow">insight por IA{% if view.ai_provider %} · {{ view.ai_provider }}{% endif %}</div>
+              <h2 class="section-title">Parecer rápido de oportunidade</h2>
+              <p class="preserve mb-0">{{ view.ai_brief }}</p>
+            </div>
+            {% endif %}
+
+            <div class="row g-3 mt-1">
+              <div class="col-lg-6">
+                <div class="inner-card h-100">
+                  <h3>Resumo da loja</h3>
+                  <p>{{ app.summary or 'Sem resumo.' }}</p>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="inner-card h-100">
+                  <h3>Monetização</h3>
+                  <div class="chip-cloud">
+                    {% for item in view.monetization %}<span class="chip strong">{{ item }}</span>{% endfor %}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-pane fade" id="desc-pane" role="tabpanel" tabindex="0">
+            <div class="app-panel-section">
+              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
+                <div>
+                  <div class="eyebrow">texto limpo</div>
+                  <h2 class="section-title">Descrição da loja</h2>
+                </div>
+                <span class="badge rounded-pill text-bg-light">rolagem interna</span>
+              </div>
+              <div class="scroll-box app-description preserve">{{ view.description or 'Sem descrição coletada.' }}</div>
+            </div>
+            {% if view.external_preview %}
+              <details class="clean-details mt-3">
+                <summary>Preview externo limpo</summary>
+                <div class="scroll-box preserve app-description mt-3">{{ view.external_preview }}</div>
+              </details>
+            {% endif %}
+          </div>
+
+          <div class="tab-pane fade" id="reviews-pane" role="tabpanel" tabindex="0">
+            <div class="app-panel-section">
+              <div class="eyebrow">voz dos usuários</div>
+              <h2 class="section-title">Reviews recentes coletadas</h2>
+              {% if view.reviews %}
+                <div class="review-list compact-review-list">
+                  {% for r in view.reviews %}
+                    <article class="review-card">
+                      <div class="d-flex justify-content-between gap-2 flex-wrap"><b>★ {{ r.score or 'N/A' }}</b><span>{{ r.at or '' }}</span></div>
+                      <p>{{ r.content }}</p>
+                      {% if r.thumbsUpCount is defined %}<em>{{ r.thumbsUpCount }} curtidas úteis</em>{% endif %}
+                    </article>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p class="text-muted">Nenhuma review coletada nesta busca.</p>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="tab-pane fade" id="media-pane" role="tabpanel" tabindex="0">
+            <div class="app-panel-section">
+              <div class="eyebrow">visual</div>
+              <h2 class="section-title">Screenshots</h2>
+              {% if view.screenshots %}
+                <div class="screens-grid compact-screens">
+                  {% for img in view.screenshots %}<a href="{{ img }}" target="_blank"><img src="{{ img }}" alt="Screenshot do app"></a>{% endfor %}
+                </div>
+              {% else %}
+                <p class="text-muted">Sem screenshots coletadas.</p>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="tab-pane fade" id="tech-pane" role="tabpanel" tabindex="0">
+            <div class="technical-card app-panel-section">
+              <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+                <div>
+                  <div class="eyebrow">debug técnico</div>
+                  <h2 class="section-title mb-0">Dados brutos formatados</h2>
+                </div>
+                <button class="btn btn-sm btn-ghost-light rounded-pill" type="button" onclick="copyRawJson()">copiar JSON</button>
+              </div>
+              <p class="text-muted small">O JSON ficou guardado aqui: útil para debug, invisível para o olho humano em modo sobrevivência.</p>
+              <div class="accordion raw-accordion" id="rawAccordion">
+                <div class="accordion-item">
+                  <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#rawMain">JSON principal</button></h2>
+                  <div id="rawMain" class="accordion-collapse collapse" data-bs-parent="#rawAccordion"><div class="accordion-body"><pre id="rawJsonBox" class="json-box pretty-json">{{ view.raw_pretty }}</pre></div></div>
+                </div>
+                {% if view.serpapi_pretty %}
+                <div class="accordion-item">
+                  <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#rawSerp">SerpAPI formatado</button></h2>
+                  <div id="rawSerp" class="accordion-collapse collapse" data-bs-parent="#rawAccordion"><div class="accordion-body"><pre class="json-box pretty-json">{{ view.serpapi_pretty }}</pre></div></div>
+                </div>
+                {% endif %}
+                {% if view.brave_pretty %}
+                <div class="accordion-item">
+                  <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#rawBrave">Brave Search formatado</button></h2>
+                  <div id="rawBrave" class="accordion-collapse collapse" data-bs-parent="#rawAccordion"><div class="accordion-body"><pre class="json-box pretty-json">{{ view.brave_pretty }}</pre></div></div>
+                </div>
+                {% endif %}
+                {% if view.external_fetch_pretty %}
+                <div class="accordion-item">
+                  <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#rawExternal">Resposta externa formatada</button></h2>
+                  <div id="rawExternal" class="accordion-collapse collapse" data-bs-parent="#rawAccordion"><div class="accordion-body"><pre class="json-box pretty-json">{{ view.external_fetch_pretty }}</pre></div></div>
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyRawJson(){
+  const el = document.getElementById('rawJsonBox');
+  if(!el) return;
+  navigator.clipboard.writeText(el.innerText || el.textContent || '');
+}
+</script>
+{% endblock %}

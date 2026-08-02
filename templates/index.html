@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% from "macros.html" import run_controls %}
+{% block title %}Dashboard · PlayStore Radar Ultra{% endblock %}
+{% block content %}
+<section class="hero mb-4">
+  <div class="row g-4 align-items-center">
+    <div class="col-lg-7">
+      <div class="eyebrow">Google Play BR · Flask 5892 · SQLite</div>
+      <h1>Radar de apps pequenos, em crescimento e com cheiro de dinheiro.</h1>
+      <p class="lead mb-0">Escolha o modo, perfil e quantidade. No terminal, ENTER usa padrão; aqui no web os padrões já vêm selecionados.</p>
+    </div>
+    <div class="col-lg-5">
+      <div class="stats-grid">
+        <div class="stat-card"><b>{{ stats.runs }}</b><span>buscas no histórico</span></div>
+        <div class="stat-card"><b>{{ stats.apps }}</b><span>apps salvos</span></div>
+        <div class="stat-card"><b>{{ stats.running }}</b><span>buscas ativas</span></div>
+        <div class="stat-card"><b>US$ {{ '%.0f'|format(stats.total_revenue_usd_base or 0) }}</b><span>receita base/mês*</span></div>
+      </div>
+      <div class="small text-muted mt-2">*Estimativa aproximada. Não é extrato bancário, é bússola.</div>
+    </div>
+  </div>
+</section>
+
+{% if active_runs %}
+<div class="card-soft p-4 mb-4 live-history-card">
+  <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
+    <div>
+      <div class="eyebrow">ao vivo</div>
+      <h2 class="section-title mb-1">Buscas rodando agora</h2>
+      <p class="text-muted mb-0">Pausa, cancela, reinicia ou manda pro limbo sem precisar abrir outra tela.</p>
+    </div>
+    <a href="{{ url_for('runs_page') }}" class="btn btn-sm btn-light rounded-pill">histórico completo</a>
+  </div>
+  <div class="history-list">
+    {% for r in active_runs %}
+      <div class="history-item active-run-row">
+        <div>
+          <b>Run #{{ r.id }} · {{ r.level }} · {{ r.profile }}</b>
+          <span>{{ r.created_at }} · {{ r.apps_kept or 0 }} apps · {{ r.last_message or 'Rodando...' }}</span>
+        </div>
+        <span class="status {{ r.status }}">{{ r.status }}</span>
+        {{ run_controls(r, compact=True, show_label=False) }}
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-xl-5">
+    <div class="card-soft p-4 h-100">
+      <h2 class="section-title">Nova busca</h2>
+      <form method="post" action="{{ url_for('start_run') }}" class="row g-3">
+        <div class="col-12">
+          <label class="form-label">Buscar app por nome/palavra-chave</label>
+          <input name="search_query" id="searchQueryInput" type="text" class="form-control rounded-4" placeholder='Ex: "editor de foto", "controle financeiro", nome do app...'>
+          <div class="form-hint mt-1">Se preenchido, ignora escopo/categorias abaixo: busca só por esse termo no Google Play e faz o scraping completo (detalhes + reviews) de todos os apps encontrados.</div>
+        </div>
+        <div class="col-md-6" id="scopeFieldWrap">
+          <label class="form-label">Escopo</label>
+          <select name="scope" id="scopeSelect" class="form-select rounded-4">
+            {% for key, label in SCOPES.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+          </select>
+          <div class="form-hint mt-1">Todos = apps + jogos, sem filtro fino.</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Nível</label>
+          <select name="level" class="form-select rounded-4">
+            {% for key, label in LEVELS.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12 category-filter-wrap d-none" id="appsCategoryWrap" data-category-wrap="APPS">
+          <label class="form-label">Categorias de aplicativos</label>
+          <div class="dropdown category-dropdown">
+            <button class="btn btn-light rounded-4 dropdown-toggle w-100 text-start" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+              <span class="category-dropdown-title" data-title-for="apps">Todas as categorias de apps</span>
+            </button>
+            <div class="dropdown-menu category-menu p-3 shadow-sm">
+              <label class="category-check master">
+                <input class="form-check-input me-2" type="checkbox" data-master-for="apps" checked>
+                <span>Todas as categorias</span>
+              </label>
+              <div class="category-menu-divider"></div>
+              <div class="category-options">
+                {% for cat in CATEGORY_GROUPS.apps %}
+                <div class="category-item">
+                  <label class="category-check">
+                    <input class="form-check-input me-2" type="checkbox" name="apps_category_codes" value="{{ cat.code }}" data-category-group="apps" checked>
+                    <span>{{ cat.name }}</span>
+                  </label>
+                  {% if cat.subs %}
+                  <button type="button" class="subcat-toggle" data-subcat-toggle="apps-{{ cat.code }}" aria-expanded="false">
+                    <i class="bi bi-chevron-down"></i> subcategorias
+                  </button>
+                  <div class="subcat-menu" id="subcat-apps-{{ cat.code }}">
+                    {% for sub in cat.subs %}
+                    <label class="subcat-check">
+                      <input class="form-check-input me-2" type="checkbox" name="apps_subcategory_codes" value="{{ cat.code }}::{{ sub.code }}" data-subcat-group="apps" data-subcat-parent="{{ cat.code }}">
+                      <span>{{ sub.name }}</span>
+                    </label>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          <div class="form-hint mt-1">Padrão: todas. Desmarque o que não interessa e caça só o filé.</div>
+        </div>
+
+        <div class="col-12 category-filter-wrap d-none" id="gamesCategoryWrap" data-category-wrap="JOGOS">
+          <label class="form-label">Categorias de jogos</label>
+          <div class="dropdown category-dropdown">
+            <button class="btn btn-light rounded-4 dropdown-toggle w-100 text-start" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+              <span class="category-dropdown-title" data-title-for="games">Todas as categorias de jogos</span>
+            </button>
+            <div class="dropdown-menu category-menu p-3 shadow-sm">
+              <label class="category-check master">
+                <input class="form-check-input me-2" type="checkbox" data-master-for="games" checked>
+                <span>Todas as categorias</span>
+              </label>
+              <div class="category-menu-divider"></div>
+              <div class="category-options">
+                {% for cat in CATEGORY_GROUPS.games %}
+                <div class="category-item">
+                  <label class="category-check">
+                    <input class="form-check-input me-2" type="checkbox" name="games_category_codes" value="{{ cat.code }}" data-category-group="games" checked>
+                    <span>{{ cat.name }}</span>
+                  </label>
+                  {% if cat.subs %}
+                  <button type="button" class="subcat-toggle" data-subcat-toggle="games-{{ cat.code }}" aria-expanded="false">
+                    <i class="bi bi-chevron-down"></i> subcategorias
+                  </button>
+                  <div class="subcat-menu" id="subcat-games-{{ cat.code }}">
+                    {% for sub in cat.subs %}
+                    <label class="subcat-check">
+                      <input class="form-check-input me-2" type="checkbox" name="games_subcategory_codes" value="{{ cat.code }}::{{ sub.code }}" data-subcat-group="games" data-subcat-parent="{{ cat.code }}">
+                      <span>{{ sub.name }}</span>
+                    </label>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          <div class="form-hint mt-1">Padrão: todas. Dá para escolher uma, várias ou voltar no modo aspirador de pó.</div>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label">Perfil</label>
+          <select name="profile" class="form-select rounded-4">
+            {% for key, label in PROFILES.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Apps/categoria</label>
+          <input name="quantity" type="number" class="form-control rounded-4" value="25" min="1" max="500">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Limitar categorias</label>
+          <input name="max_categories" type="number" class="form-control rounded-4" placeholder="vazio = todas" min="1">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Câmbio USD→BRL</label>
+          <input name="exchange_rate_brl" type="number" step="0.01" class="form-control rounded-4" value="5.40">
+        </div>
+        <div class="col-12 d-flex gap-3 flex-wrap">
+          <input type="hidden" name="include_paid_apps" value="0">
+          <input type="hidden" name="open_html" value="0">
+          <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="include_paid_apps" value="1" checked><label class="form-check-label">Incluir apps pagos</label></div>
+          <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="open_html" value="1" checked><label class="form-check-label">Gerar HTML exportável</label></div>
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary rounded-pill px-4"><i class="bi bi-rocket-takeoff me-1"></i> Iniciar busca</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div class="col-xl-7">
+    <div class="card-soft p-4 mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-2"><h2 class="section-title mb-0">APIs detectadas</h2><span class="badge rounded-pill text-bg-light">.env</span></div>
+      <div class="api-grid">
+        {% for name, ok in api.available().items() %}
+          <div class="api-pill {{ 'on' if ok else '' }}"><span>{{ name }}</span><b>{{ 'ativa' if ok else 'sem key' }}</b></div>
+        {% endfor %}
+      </div>
+      <p class="small text-muted mt-3 mb-0">Bright Data precisa de token + zone. OpenWebNinja precisa de key + endpoint específico.</p>
+    </div>
+    <div class="card-soft p-4">
+      <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap"><div><div class="eyebrow">memória do radar</div><h2 class="section-title mb-0">Histórico de pesquisas</h2></div><a href="{{ url_for('runs_page') }}" class="btn btn-sm btn-light rounded-pill">Ver todas</a></div>
+      <div class="table-responsive mt-3">
+        <table class="table align-middle history-table">
+          <thead><tr><th>ID</th><th>Status</th><th>Nível</th><th>Perfil</th><th>Apps</th><th>Controles</th></tr></thead>
+          <tbody>
+          {% for r in runs %}
+            <tr><td>#{{ r.id }}</td><td><span class="status {{ r.status }}">{{ r.status }}</span></td><td>{{ r.level }}</td><td>{{ r.profile }}</td><td>{{ r.apps_kept }}</td><td>{{ run_controls(r, compact=True, show_label=False) }}</td></tr>
+          {% else %}<tr><td colspan="6" class="text-muted">Nenhuma busca ainda.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card-soft p-4 mt-4 apps-table-card compact-dashboard-table">
+  <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+    <div>
+      <h2 class="section-title mb-1">Apps em destaque</h2>
+      <p class="text-muted mb-0 small">Agora em tabela: imagem, métricas e ação sem aquele carnaval de cards.</p>
+    </div>
+    <a href="{{ url_for('apps_page') }}" class="btn btn-sm btn-light rounded-pill"><i class="bi bi-table me-1"></i>Explorar apps</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle apps-table compact-app-table">
+      <thead><tr><th>App</th><th>Categoria</th><th>Nota</th><th>Installs</th><th>Scores</th><th>Receita/mês</th><th>Conf.</th><th></th></tr></thead>
+      <tbody>
+        {% for a in apps %}{% include "partials_app_table_row.html" %}{% else %}<tr><td colspan="8" class="text-muted">Rode uma busca para popular o radar.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% macro run_controls(r, compact=False, show_label=True, show_export=True) %}
+  <div class="run-control-bar {{ 'compact' if compact else '' }}" data-run-controls="{{ r.id }}">
+    {% if show_label %}<span class="control-label"><i class="bi bi-sliders2 me-1"></i>controle</span>{% endif %}
+    <a class="btn btn-sm btn-outline-primary rounded-pill" href="{{ url_for('run_detail', run_id=r.id) }}" title="Abrir detalhes"><i class="bi bi-eye"></i>{% if not compact %}<span>abrir</span>{% endif %}</a>
+    {% if show_export %}
+    <a class="btn btn-sm btn-outline-secondary rounded-pill" href="{{ url_for('export_run', run_id=r.id, fmt='html') }}" title="Exportar como HTML"><i class="bi bi-filetype-html"></i>{% if not compact %}<span>html</span>{% endif %}</a>
+    <a class="btn btn-sm btn-outline-secondary rounded-pill" href="{{ url_for('export_run', run_id=r.id, fmt='json') }}" title="Exportar como JSON"><i class="bi bi-filetype-json"></i>{% if not compact %}<span>json</span>{% endif %}</a>
+    <a class="btn btn-sm btn-outline-secondary rounded-pill" href="{{ url_for('export_run', run_id=r.id, fmt='csv') }}" title="Exportar como CSV"><i class="bi bi-filetype-csv"></i>{% if not compact %}<span>csv</span>{% endif %}</a>
+    {% endif %}
+    {% if r.status in ['paused','pause_requested'] %}
+      <form method="post" action="{{ url_for('resume_run', run_id=r.id) }}"><button class="btn btn-sm btn-success rounded-pill" title="Continuar"><i class="bi bi-play-fill"></i>{% if not compact %}<span>continuar</span>{% endif %}</button></form>
+    {% elif r.status in ['queued','running'] %}
+      <form method="post" action="{{ url_for('pause_run', run_id=r.id) }}"><button class="btn btn-sm btn-warning rounded-pill" title="Pausar"><i class="bi bi-pause-fill"></i>{% if not compact %}<span>pausar</span>{% endif %}</button></form>
+    {% endif %}
+    {% if r.status in RUN_ACTIVE_STATUSES %}
+      <form method="post" action="{{ url_for('cancel_run', run_id=r.id) }}" onsubmit="return confirm('Cancelar a Run #{{ r.id }}? O histórico e os apps já salvos ficam guardados.')"><button class="btn btn-sm btn-outline-danger rounded-pill" title="Cancelar"><i class="bi bi-x-octagon"></i>{% if not compact %}<span>cancelar</span>{% endif %}</button></form>
+      <form method="post" action="{{ url_for('restart_run', run_id=r.id) }}" onsubmit="return confirm('Reiniciar a Run #{{ r.id }}? A atual será parada e uma nova busca com a mesma configuração será criada.')"><button class="btn btn-sm btn-outline-dark rounded-pill" title="Reiniciar"><i class="bi bi-arrow-clockwise"></i>{% if not compact %}<span>reiniciar</span>{% endif %}</button></form>
+    {% else %}
+      <form method="post" action="{{ url_for('rerun_run', run_id=r.id) }}"><button class="btn btn-sm btn-outline-dark rounded-pill" title="Refazer busca"><i class="bi bi-repeat"></i>{% if not compact %}<span>refazer</span>{% endif %}</button></form>
+    {% endif %}
+    <form method="post" action="{{ url_for('delete_run_route', run_id=r.id) }}" onsubmit="return confirm('Excluir a Run #{{ r.id }} com apps e logs? Isso não tem ctrl+z mágico.')"><button class="btn btn-sm btn-danger rounded-pill" title="Excluir"><i class="bi bi-trash3"></i>{% if not compact %}<span>excluir</span>{% endif %}</button></form>
+  </div>
+{% endmacro %}

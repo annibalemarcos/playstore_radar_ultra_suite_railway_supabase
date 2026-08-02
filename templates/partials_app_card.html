@@ -1,0 +1,8 @@
+<a class="mini-app-card" href="{{ url_for('app_detail', app_pk=a.id) }}">
+  {% if a.icon %}<img src="{{ a.icon }}" alt="icone">{% else %}<div class="app-placeholder">?</div>{% endif %}
+  <div>
+    <b>{{ a.title or 'Sem título' }}</b>
+    <span>{{ a.developer or 'Dev não informado' }}</span>
+    <em>opp {{ a.opportunity_score or 0 }} · indie {{ a.indie_score or 0 }} · US$ {{ '%.0f'|format(a.revenue_monthly_usd_base or 0) }}/mês</em>
+  </div>
+</a>

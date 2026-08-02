@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "macros.html" import run_controls %}
+{% block title %}Histórico de pesquisas · PlayStore Radar Ultra{% endblock %}
+{% block content %}
+<div class="card-soft p-4 history-page-card">
+  <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
+    <div>
+      <div class="eyebrow">histórico de pesquisa</div>
+      <h1 class="page-title mb-1">Buscas</h1>
+      <p class="text-muted mb-0">Aqui é o painel de comando: pausar, continuar, cancelar, excluir, reiniciar e refazer sem drama.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <button type="button" class="btn btn-outline-secondary rounded-pill" data-export-all-fmt="html" data-export-all-label="HTML" title="Exportar todas as buscas como HTML"><i class="bi bi-filetype-html me-1"></i>Exportar tudo como HTML</button>
+      <button type="button" class="btn btn-outline-secondary rounded-pill" data-export-all-fmt="json" data-export-all-label="JSON" title="Exportar todas as buscas como JSON"><i class="bi bi-filetype-json me-1"></i>Exportar tudo como JSON</button>
+      <button type="button" class="btn btn-outline-secondary rounded-pill" data-export-all-fmt="csv" data-export-all-label="CSV" title="Exportar todas as buscas como CSV"><i class="bi bi-filetype-csv me-1"></i>Exportar tudo como CSV</button>
+      <a class="btn btn-primary rounded-pill" href="{{ url_for('index') }}"><i class="bi bi-plus-circle me-1"></i>Nova busca</a>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table align-middle history-table">
+      <thead><tr><th>ID</th><th>Criado</th><th>Status</th><th>Escopo</th><th>Nível</th><th>Perfil</th><th>Qtd.</th><th>Apps</th><th>Mensagem</th><th>Controles</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr class="{{ 'table-active-run' if r.status in RUN_ACTIVE_STATUSES else '' }}">
+          <td><b>#{{ r.id }}</b></td>
+          <td class="small text-muted">{{ r.created_at }}</td>
+          <td><span class="status {{ r.status }}">{{ r.status }}</span></td>
+          <td>{{ r.scope }}</td><td>{{ r.level }}</td><td>{{ r.profile }}</td><td>{{ r.quantity }}</td><td>{{ r.apps_kept }}</td>
+          <td class="text-muted last-message-cell">{{ r.last_message }}</td>
+          <td>{{ run_controls(r, compact=True, show_label=False) }}</td>
+        </tr>
+      {% else %}<tr><td colspan="10" class="text-muted">Nada por aqui ainda.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal fade" id="exportAllModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content rounded-4">
+      <div class="modal-header border-0">
+        <h5 class="modal-title">Exportar tudo como <span id="exportAllFormatLabel">...</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3">Como você quer exportar as buscas?</p>
+        <div class="d-flex flex-column gap-2">
+          <a id="exportAllSeparateBtn" href="#" class="btn btn-outline-dark rounded-4 text-start p-3">
+            <i class="bi bi-folder2-open me-2"></i><b>Um arquivo por busca</b>
+            <div class="small text-muted mt-1">Baixa um .zip com um arquivo separado para cada run.</div>
+          </a>
+          <a id="exportAllCombinedBtn" href="#" class="btn btn-outline-primary rounded-4 text-start p-3">
+            <i class="bi bi-files me-2"></i><b>Tudo junto</b>
+            <div class="small text-muted mt-1">Baixa um único arquivo combinando os apps de todas as buscas.</div>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const modalEl = document.querySelector('#exportAllModal');
+  if (!modalEl) return;
+  const modal = new bootstrap.Modal(modalEl);
+  const label = modalEl.querySelector('#exportAllFormatLabel');
+  const separateBtn = modalEl.querySelector('#exportAllSeparateBtn');
+  const combinedBtn = modalEl.querySelector('#exportAllCombinedBtn');
+  document.querySelectorAll('[data-export-all-fmt]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const fmt = btn.dataset.exportAllFmt;
+      label.textContent = btn.dataset.exportAllLabel || fmt.toUpperCase();
+      separateBtn.href = `/export-all/${fmt}?mode=separate`;
+      combinedBtn.href = `/export-all/${fmt}?mode=combined`;
+      modal.show();
+    });
+  });
+})();
+</script>
+{% endblock %}

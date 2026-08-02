@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% from "macros.html" import run_controls %}
+{% block title %}Apps · PlayStore Radar Ultra{% endblock %}
+{% block content %}
+<div class="explore-hero card-soft p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+    <div>
+      <div class="eyebrow">garimpo de oportunidades</div>
+      <h1 class="page-title mb-1">Explorar apps</h1>
+      <p class="text-muted mb-0">Ordene pela data da pesquisa, filtre por run e controle as buscas sem abandonar a tabela.</p>
+    </div>
+    <a class="btn btn-outline-primary rounded-pill" href="{{ url_for('apps_page', order='created_at') }}">mais recentes</a>
+  </div>
+
+  <form class="row g-2 align-items-end mb-3">
+    <div class="col-xl-3 col-md-6">
+      <label class="form-label">Busca</label>
+      <input name="q" value="{{ q }}" class="form-control rounded-4" placeholder="app, dev, categoria...">
+    </div>
+    <div class="col-xl-2 col-md-6">
+      <label class="form-label">Run</label>
+      <select name="run_id" class="form-select rounded-4">
+        <option value="">Todos</option>
+        {% for r in runs %}<option value="{{ r.id }}" {% if run_id==r.id %}selected{% endif %}>#{{ r.id }} · {{ r.created_at }} · {{ r.level }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-xl-2 col-md-6">
+      <label class="form-label">Perfil</label>
+      <select name="profile" class="form-select rounded-4">
+        <option value="" {% if not profile %}selected{% endif %}>Todos</option>
+        <option value="pequeno/indie" {% if profile=='pequeno/indie' %}selected{% endif %}>pequeno/indie</option>
+        <option value="crescendo" {% if profile=='crescendo' %}selected{% endif %}>crescendo</option>
+        <option value="oportunidade" {% if profile=='oportunidade' %}selected{% endif %}>oportunidade</option>
+        <option value="sem gigantes" {% if profile=='sem gigantes' %}selected{% endif %}>sem gigantes</option>
+      </select>
+    </div>
+    <div class="col-xl-1 col-md-3">
+      <label class="form-label">Nota mín.</label>
+      <input name="min_score" value="{{ min_score or '' }}" type="number" step="0.1" class="form-control rounded-4">
+    </div>
+    <div class="col-xl-2 col-md-3">
+      <label class="form-label">De</label>
+      <input name="date_from" value="{{ date_from }}" type="date" class="form-control rounded-4">
+    </div>
+    <div class="col-xl-2 col-md-3">
+      <label class="form-label">Até</label>
+      <input name="date_to" value="{{ date_to }}" type="date" class="form-control rounded-4">
+    </div>
+    <div class="col-xl-3 col-md-6">
+      <label class="form-label">Ordenar</label>
+      <select name="order" class="form-select rounded-4">
+        {% set orders = [
+          ('created_at','Pesquisa · mais recente'),
+          ('created_at_asc','Pesquisa · mais antiga'),
+          ('run_created_at','Run mais recente'),
+          ('run_created_at_asc','Run mais antiga'),
+          ('score','Nota · maior primeiro'),
+          ('score_asc','Nota · menor primeiro'),
+          ('real_installs','Installs · maior primeiro'),
+          ('real_installs_asc','Installs · menor primeiro'),
+          ('scores','Scores · maior primeiro'),
+          ('scores_asc','Scores · menor primeiro'),
+          ('revenue_monthly_usd_base','Receita/mês · maior primeiro'),
+          ('revenue_monthly_usd_base_asc','Receita/mês · menor primeiro'),
+          ('opportunity_score','Maior oportunidade'),
+          ('growth_score','Maior crescimento'),
+          ('indie_score','Mais indie/pequeno'),
+          ('profit_monthly_usd_base','Maior lucro estimado'),
+          ('profit_monthly_usd_base_asc','Menor lucro estimado'),
+          ('ratings','Mais avaliações')
+        ] %}
+        {% for value, label in orders %}<option value="{{ value }}" {% if order==value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-xl-3 col-md-6 d-flex gap-2">
+      <button class="btn btn-primary rounded-pill px-4 flex-grow-1"><i class="bi bi-funnel me-1"></i>Filtrar</button>
+      <a href="{{ url_for('apps_page') }}" class="btn btn-ghost-light rounded-pill px-4">limpar</a>
+    </div>
+  </form>
+
+  {% if selected_run %}
+    <div class="selected-run-control">
+      <div>
+        <span class="eyebrow">busca selecionada</span>
+        <b>Run #{{ selected_run.id }} · {{ selected_run.level }} · {{ selected_run.profile }}</b>
+        <em>{{ selected_run.last_message or 'Sem mensagem ainda.' }}</em>
+      </div>
+      <span class="status {{ selected_run.status }}">{{ selected_run.status }}</span>
+      {{ run_controls(selected_run, compact=True, show_label=False) }}
+    </div>
+  {% endif %}
+</div>
+
+<div class="card-soft p-4 mb-4 history-mini-card">
+  <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
+    <div>
+      <div class="eyebrow">histórico de pesquisa</div>
+      <h2 class="section-title mb-1">Controle rápido das buscas</h2>
+      <p class="text-muted mb-0">Pausar, cancelar, excluir, reiniciar ou refazer direto daqui. Prático, sem ritual de aba.</p>
+    </div>
+    <a href="{{ url_for('runs_page') }}" class="btn btn-sm btn-light rounded-pill">ver histórico completo</a>
+  </div>
+  <div class="history-list compact-history">
+    {% for r in runs[:8] %}
+      <div class="history-item">
+        <div>
+          <b>Run #{{ r.id }} · {{ r.level }} · {{ r.profile }}</b>
+          <span>{{ r.created_at }} · {{ r.apps_kept or 0 }} apps · {{ r.last_message or '' }}</span>
+        </div>
+        <span class="status {{ r.status }}">{{ r.status }}</span>
+        {{ run_controls(r, compact=True, show_label=False) }}
+      </div>
+    {% else %}
+      <p class="text-muted mb-0">Nenhuma busca no histórico ainda.</p>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card-soft p-4 apps-table-card">
+  {% set order_names = {
+    'created_at':'Pesquisa · mais recente',
+    'created_at_asc':'Pesquisa · mais antiga',
+    'run_created_at':'Run · mais recente',
+    'run_created_at_asc':'Run · mais antiga',
+    'score':'Nota · maior primeiro',
+    'score_asc':'Nota · menor primeiro',
+    'real_installs':'Installs · maior primeiro',
+    'real_installs_asc':'Installs · menor primeiro',
+    'scores':'Scores · maior primeiro',
+    'scores_asc':'Scores · menor primeiro',
+    'revenue_monthly_usd_base':'Receita/mês · maior primeiro',
+    'revenue_monthly_usd_base_asc':'Receita/mês · menor primeiro',
+    'opportunity_score':'Maior oportunidade',
+    'growth_score':'Maior crescimento',
+    'indie_score':'Mais indie/pequeno',
+    'profit_monthly_usd_base':'Maior lucro estimado',
+    'profit_monthly_usd_base_asc':'Menor lucro estimado',
+    'ratings':'Mais avaliações'
+  } %}
+  {% set sort_groups = [
+    ('Pesquisa','created_at','created_at_asc','novas','antigas'),
+    ('Nota','score','score_asc','maior','menor'),
+    ('Installs','real_installs','real_installs_asc','mais','menos'),
+    ('Scores','scores','scores_asc','maiores','menores'),
+    ('Receita/mês','revenue_monthly_usd_base','revenue_monthly_usd_base_asc','maior','menor')
+  ] %}
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+    <div>
+      <h2 class="section-title mb-1">Resultado</h2>
+      <p class="text-muted mb-0">{{ apps|length }} apps exibidos. Ordenação atual: <b>{{ order_names.get(order, order) }}</b>.</p>
+    </div>
+    <div class="result-sort-menu" aria-label="Ordenação rápida dos resultados">
+      <div class="result-sort-title"><i class="bi bi-sort-down me-1"></i>Sort rápido</div>
+      <div class="result-sort-groups">
+        {% for label, desc_order, asc_order, desc_label, asc_label in sort_groups %}
+          <div class="result-sort-group">
+            <span>{{ label }}</span>
+            <a class="sort-pill {% if order==desc_order %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order=desc_order) }}">{{ desc_label }}</a>
+            <a class="sort-pill {% if order==asc_order %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order=asc_order) }}">{{ asc_label }}</a>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle apps-table">
+      <thead>
+        <tr>
+          <th>App</th>
+          <th>Pesquisa <span class="th-sort"><a class="{% if order=='created_at' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='created_at') }}" title="Mais novas primeiro">↓</a><a class="{% if order=='created_at_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='created_at_asc') }}" title="Mais antigas primeiro">↑</a></span></th>
+          <th>Categoria</th>
+          <th>Nota <span class="th-sort"><a class="{% if order=='score' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='score') }}" title="Maior nota primeiro">↓</a><a class="{% if order=='score_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='score_asc') }}" title="Menor nota primeiro">↑</a></span></th>
+          <th>Installs <span class="th-sort"><a class="{% if order=='real_installs' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='real_installs') }}" title="Mais instalações primeiro">↓</a><a class="{% if order=='real_installs_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='real_installs_asc') }}" title="Menos instalações primeiro">↑</a></span></th>
+          <th>Scores <span class="th-sort"><a class="{% if order=='scores' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='scores') }}" title="Maiores scores primeiro">↓</a><a class="{% if order=='scores_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='scores_asc') }}" title="Menores scores primeiro">↑</a></span></th>
+          <th>Receita/mês <span class="th-sort"><a class="{% if order=='revenue_monthly_usd_base' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='revenue_monthly_usd_base') }}" title="Maior receita primeiro">↓</a><a class="{% if order=='revenue_monthly_usd_base_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='revenue_monthly_usd_base_asc') }}" title="Menor receita primeiro">↑</a></span></th>
+          <th>Perfil</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for a in apps %}
+        <tr>
+          <td class="app-cell">
+            <div class="d-flex gap-2 align-items-center">
+              {% if a.icon %}<img class="tiny-icon" src="{{ a.icon }}" alt="Ícone">{% endif %}
+              <div class="min-w-0"><b>{{ a.title }}</b><br><span class="text-muted small">{{ a.developer }}</span></div>
+            </div>
+          </td>
+          <td class="date-cell"><b>{{ a.created_at or a.run_created_at or 'N/A' }}</b><br><span class="text-muted small">Run #{{ a.run_id }} · {{ a.run_level or '' }}</span></td>
+          <td>{{ a.categoria }}</td>
+          <td>{{ a.score or 'N/A' }}</td>
+          <td>{{ a.real_installs or a.min_installs or a.installs }}</td>
+          <td><span class="chip">opp {{ a.opportunity_score or 0 }}</span> <span class="chip">grow {{ a.growth_score or 0 }}</span> <span class="chip">indie {{ a.indie_score or 0 }}</span></td>
+          <td>US$ {{ '%.0f'|format(a.revenue_monthly_usd_base or 0) }}<br><span class="text-muted small">lucro US$ {{ '%.0f'|format(a.profit_monthly_usd_base or 0) }}</span></td>
+          <td>{{ a.perfil_detectado }}</td>
+          <td><a class="btn btn-sm btn-outline-primary rounded-pill" href="{{ url_for('app_detail', app_pk=a.id) }}">abrir</a></td>
+        </tr>
+      {% else %}<tr><td colspan="9" class="text-muted">Nada encontrado.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
