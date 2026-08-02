@@ -48,10 +48,10 @@ O Railway detectará o `Dockerfile` e o `railway.json`. O servidor inicia com Gu
 Abra o serviço no Railway e adicione:
 
 ```env
-DATABASE_URL=postgresql://postgres.PROJECT_REF:SENHA@aws-0-REGIAO.pooler.supabase.com:5432/postgres
+DATABASE_URL=postgresql://postgres.jpakhunbtvpqsgtysycc:LkJm4eSAWUBo8z0W@aws-0-ca-central-1.pooler.supabase.com:5432/postgres
 PLAYSTORE_RADAR_SECRET_KEY=gere-uma-chave-longa-e-aleatoria
 PLAYSTORE_RADAR_LOGIN_USER=admin
-PLAYSTORE_RADAR_LOGIN_PASSWORD=troque-esta-senha
+PLAYSTORE_RADAR_LOGIN_PASSWORD=000000
 DB_SSLMODE=require
 ```
 
