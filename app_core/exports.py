@@ -73,6 +73,12 @@ def compact_text(value: Any, limit: int = 180) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def source_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
 def load_apps(db_path: str | Path, run_id: int) -> List[Dict[str, Any]]:
     # Export visual abre por oportunidade. O usuário ainda pode reorganizar no HTML.
     return list_apps(db_path, run_id=run_id, order="opportunity_score", limit=20_000)
@@ -160,11 +166,8 @@ def app_table_row(app: Dict[str, Any], index: int) -> str:
     img = f'<img src="{h(icon)}" class="app-icon" loading="lazy" alt="ícone de {h(app.get("title") or "app")}">' if icon else '<div class="app-icon placeholder">?</div>'
     installs_value = app.get("real_installs") or app.get("min_installs") or app.get("installs") or 0
     summary = compact_text(app.get("summary") or app.get("description") or "", 210)
-    external_sources = app.get("external_sources_used") or ""
-    if isinstance(external_sources, list):
-        sources_text = ", ".join(str(s) for s in external_sources)
-    else:
-        sources_text = str(external_sources or "")
+    sources = source_list(app.get("external_sources_used"))
+    sources_text = ", ".join(sources)
     score_sum = as_int(app.get("opportunity_score")) + as_int(app.get("growth_score")) + as_int(app.get("indie_score"))
     url = app.get("url") or "#"
     return f"""
@@ -179,6 +182,8 @@ def app_table_row(app: Dict[str, Any], index: int) -> str:
           data-grow="{as_int(app.get('growth_score'))}"
           data-indie="{as_int(app.get('indie_score'))}"
           data-revenue="{as_float(app.get('revenue_monthly_usd_base'))}"
+          data-confidence="{h(app.get('financial_confidence') or '')}"
+          data-sources="{h('|'.join(sources))}"
           data-scores="{score_sum}"
           data-date="{h(app.get('created_at') or app.get('run_created_at') or '')}">
         <td class="rank-cell">#{h(app.get('rank') or index)}</td>
@@ -203,6 +208,7 @@ def app_table_row(app: Dict[str, Any], index: int) -> str:
           <span>indie <b>{h(app.get('indie_score') or 0)}</b></span>
         </td>
         <td class="money-cell"><b>{money(app.get('revenue_monthly_usd_base'))}</b><span>lucro {money(app.get('profit_monthly_usd_base'))}</span></td>
+        <td class="num-cell"><b>{h(app.get('financial_confidence') or '—')}</b><span>conf.</span></td>
         <td class="date-cell"><b>{h(app.get('created_at') or app.get('run_created_at') or '—')}</b><span>{h(sources_text[:90])}</span></td>
       </tr>
     """
@@ -214,11 +220,13 @@ def _render_report_html(path: Path, page_title: str, kicker: str, subtitle: str,
     total_apps = len(apps)
     categories = sorted({a.get("categoria") for a in apps if a.get("categoria")})
     profiles = sorted({a.get("perfil_detectado") for a in apps if a.get("perfil_detectado")})
+    sources = sorted({source for app in apps for source in source_list(app.get("external_sources_used"))})
     revenue = sum(as_float(a.get("revenue_monthly_usd_base")) for a in apps)
     avg_score = sum(as_float(a.get("score")) for a in apps) / total_apps if total_apps else 0
     rows = "\n".join(app_table_row(a, i + 1) for i, a in enumerate(apps))
     category_options = "\n".join(f'<option value="{h(c)}">{h(c)}</option>' for c in categories)
     profile_options = "\n".join(f'<option value="{h(p)}">{h(p)}</option>' for p in profiles)
+    source_options = "\n".join(f'<option value="{h(source)}">{h(source)}</option>' for source in sources)
     apps_json = json_script(apps)
     html = f"""<!doctype html>
 <html lang="pt-BR">
@@ -241,7 +249,10 @@ def _render_report_html(path: Path, page_title: str, kicker: str, subtitle: str,
     .toolbar {{ background:rgba(255,255,255,.94); border:1px solid var(--line); border-radius:24px; padding:16px; margin:18px 0; position:sticky; top:12px; z-index:10; box-shadow:0 14px 34px rgba(31,41,55,.06); backdrop-filter: blur(10px); }}
     .sort-pills {{ display:flex; flex-wrap:wrap; gap:8px; }}
     .sort-pills button {{ border:1px solid var(--line); background:#fff; border-radius:999px; padding:7px 12px; font-weight:800; font-size:.82rem; }}
-    .sort-pills button.active {{ background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#fff; border-color:transparent; }}
+    .sort-pills button.active,.table-sort-button.active {{ background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#fff; border-color:transparent; }}
+    .table-sort-button {{ display:inline-flex; align-items:center; gap:6px; border:1px solid transparent; background:transparent; border-radius:999px; color:#667085; font:inherit; font-weight:900; padding:5px 9px; text-transform:inherit; letter-spacing:inherit; }}
+    .table-sort-button::after {{ content:"↕"; color:#98a2b3; font-size:.78rem; }}
+    .table-sort-button.active::after {{ content:attr(data-dir); color:inherit; text-transform:uppercase; font-size:.65rem; }}
     .table-card {{ background:var(--card); border:1px solid var(--line); border-radius:26px; overflow:hidden; box-shadow:0 16px 42px rgba(31,41,55,.065); }}
     .table-wrap {{ overflow:auto; max-height: calc(100vh - 260px); }}
     table {{ min-width:1280px; margin:0!important; }}
@@ -335,15 +346,21 @@ def _render_report_html(path: Path, page_title: str, kicker: str, subtitle: str,
       <div class="col-xl-2 col-md-3"><label class="form-label small fw-bold">Categoria</label><select id="cat" class="form-select rounded-4"><option value="">Todas</option>{category_options}</select></div>
       <div class="col-xl-2 col-md-3"><label class="form-label small fw-bold">Perfil</label><select id="profile" class="form-select rounded-4"><option value="">Todos</option>{profile_options}</select></div>
       <div class="col-xl-2 col-md-3"><label class="form-label small fw-bold">Nota mín.</label><input id="minScore" type="number" step="0.1" min="0" max="5" class="form-control rounded-4" placeholder="0"></div>
+      <div class="col-xl-2 col-md-3"><label class="form-label small fw-bold">Receita min.</label><input id="minRevenue" type="number" step="1" min="0" class="form-control rounded-4" placeholder="US$ 0"></div>
+      <div class="col-xl-2 col-md-3"><label class="form-label small fw-bold">Fonte externa</label><select id="source" class="form-select rounded-4"><option value="">Todas</option>{source_options}</select></div>
       <div class="col-xl-2 col-md-3"><label class="form-label small fw-bold">Visíveis</label><div class="form-control rounded-4 bg-white"><b id="visibleCount">{total_apps}</b> / {total_apps}</div></div>
       <div class="col-12 mt-2">
         <div class="sort-pills" aria-label="Ordenação rápida">
           <button type="button" data-sort="date" data-dir="desc">Pesquisa novas</button>
           <button type="button" data-sort="date" data-dir="asc">Pesquisa antigas</button>
           <button type="button" data-sort="score" data-dir="desc">Nota maior</button>
+          <button type="button" data-sort="score" data-dir="asc">Nota menor</button>
           <button type="button" data-sort="installs" data-dir="desc">Installs maior</button>
+          <button type="button" data-sort="installs" data-dir="asc">Installs menor</button>
           <button type="button" data-sort="scores" data-dir="desc">Scores maior</button>
+          <button type="button" data-sort="scores" data-dir="asc">Scores menor</button>
           <button type="button" data-sort="revenue" data-dir="desc">Receita maior</button>
+          <button type="button" data-sort="revenue" data-dir="asc">Receita menor</button>
         </div>
       </div>
     </div>
@@ -355,13 +372,14 @@ def _render_report_html(path: Path, page_title: str, kicker: str, subtitle: str,
         <thead>
           <tr>
             <th>#</th>
-            <th>App</th>
-            <th>Categoria / Perfil</th>
-            <th>Nota</th>
-            <th>Installs</th>
-            <th>Scores</th>
-            <th>Receita/mês</th>
-            <th>Pesquisa / Fontes</th>
+            <th><button type="button" class="table-sort-button" data-sort="title" data-dir="asc">App</button></th>
+            <th><button type="button" class="table-sort-button" data-sort="category" data-dir="asc">Categoria / Perfil</button></th>
+            <th><button type="button" class="table-sort-button" data-sort="score" data-dir="desc">Nota</button></th>
+            <th><button type="button" class="table-sort-button" data-sort="installs" data-dir="desc">Installs</button></th>
+            <th><button type="button" class="table-sort-button" data-sort="scores" data-dir="desc">Scores</button></th>
+            <th><button type="button" class="table-sort-button" data-sort="revenue" data-dir="desc">Receita/mês</button></th>
+            <th><button type="button" class="table-sort-button" data-sort="confidence" data-dir="asc">Conf.</button></th>
+            <th><button type="button" class="table-sort-button" data-sort="date" data-dir="desc">Pesquisa / Fontes</button></th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
@@ -401,36 +419,64 @@ def _render_report_html(path: Path, page_title: str, kicker: str, subtitle: str,
 </div>
 <script type="application/json" id="appsData">{apps_json}</script>
 <script>
-const q = document.querySelector('#q'), cat = document.querySelector('#cat'), profile = document.querySelector('#profile'), minScore = document.querySelector('#minScore'), visibleCount = document.querySelector('#visibleCount');
+const q = document.querySelector('#q'), cat = document.querySelector('#cat'), profile = document.querySelector('#profile'), minScore = document.querySelector('#minScore'), minRevenue = document.querySelector('#minRevenue'), source = document.querySelector('#source'), visibleCount = document.querySelector('#visibleCount');
 const tbody = document.querySelector('#appsTable tbody');
 const appsData = JSON.parse(document.querySelector('#appsData').textContent || '[]');
 let currentAppJson = null;
+let currentSort = {{key:null, dir:null}};
 function norm(s) {{ return (s||'').toString().toLowerCase(); }}
 function rowOk(row) {{
-  const qq = norm(q.value); const cc = cat.value; const pp = profile.value; const ms = parseFloat(minScore.value||'0');
+  const qq = norm(q.value); const cc = cat.value; const pp = profile.value; const ms = parseFloat(minScore.value||'0'); const mr = parseFloat(minRevenue.value||'0'); const ss = norm(source.value);
   const text = norm(row.dataset.title + ' ' + row.dataset.dev + ' ' + row.dataset.cat);
-  return (!qq || text.includes(qq)) && (!cc || row.dataset.cat === cc) && (!pp || row.dataset.profile === pp) && (!ms || parseFloat(row.dataset.score||'0') >= ms);
+  const sources = norm(row.dataset.sources || '');
+  return (!qq || text.includes(qq)) && (!cc || row.dataset.cat === cc) && (!pp || row.dataset.profile === pp) && (!ms || parseFloat(row.dataset.score||'0') >= ms) && (!mr || parseFloat(row.dataset.revenue||'0') >= mr) && (!ss || sources.includes(ss));
+}}
+function syncUrl() {{
+  const params = new URLSearchParams(window.location.search);
+  const values = {{q:q.value.trim(), cat:cat.value, profile:profile.value, minScore:minScore.value.trim(), minRevenue:minRevenue.value.trim(), source:source.value, sort:currentSort.key||'', dir:currentSort.dir||''}};
+  Object.entries(values).forEach(([key, value]) => {{
+    if(!value) params.delete(key);
+    else params.set(key, value);
+  }});
+  const query = params.toString();
+  window.history.replaceState(null, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
 }}
 function filt() {{
   let visible = 0;
   document.querySelectorAll('.app-row').forEach(row => {{ const ok = rowOk(row); row.classList.toggle('hidden', !ok); if(ok) visible++; }});
   visibleCount.textContent = visible;
 }}
-function sortRows(key, dir='desc') {{
+function sortRows(key, dir='desc', updateUrl=true) {{
   const rows = [...document.querySelectorAll('.app-row')];
   const numeric = ['score','installs','opp','grow','indie','revenue','scores'];
+  const attr = key === 'category' ? 'cat' : key;
   rows.sort((a,b) => {{
     let av, bv;
     if(key === 'date') {{ av = a.dataset.date || ''; bv = b.dataset.date || ''; }}
-    else {{ av = parseFloat(a.dataset[key] || '0'); bv = parseFloat(b.dataset[key] || '0'); }}
+    else if(numeric.includes(key)) {{ av = parseFloat(a.dataset[attr] || '0'); bv = parseFloat(b.dataset[attr] || '0'); }}
+    else {{ av = a.dataset[attr] || ''; bv = b.dataset[attr] || ''; }}
     if(numeric.includes(key)) return dir === 'asc' ? av - bv : bv - av;
     return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
   }});
   rows.forEach(row => tbody.appendChild(row));
-  document.querySelectorAll('.sort-pills button').forEach(b => b.classList.remove('active'));
-  const active = document.querySelector(`.sort-pills button[data-sort="${{key}}"][data-dir="${{dir}}"]`);
-  if(active) active.classList.add('active');
+  currentSort = {{key, dir}};
+  document.querySelectorAll('[data-sort]').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll(`[data-sort="${{key}}"][data-dir="${{dir}}"]`).forEach(active => active.classList.add('active'));
   filt();
+  if(updateUrl) syncUrl();
+}}
+function restoreUrl() {{
+  const params = new URLSearchParams(window.location.search);
+  q.value = params.get('q') || '';
+  cat.value = params.get('cat') || '';
+  profile.value = params.get('profile') || '';
+  minScore.value = params.get('minScore') || '';
+  minRevenue.value = params.get('minRevenue') || '';
+  source.value = params.get('source') || '';
+  const key = params.get('sort');
+  const dir = params.get('dir') === 'asc' ? 'asc' : 'desc';
+  if(key) sortRows(key, dir, false);
+  else filt();
 }}
 function esc(value) {{
   if(value === null || value === undefined || value === '') return '';
@@ -610,8 +656,17 @@ function closeModal() {{
   modal.setAttribute('aria-hidden', 'true');
   document.body.style.overflow = '';
 }}
-[q,cat,profile,minScore].forEach(el => el.addEventListener('input', filt));
-document.querySelectorAll('.sort-pills button').forEach(btn => btn.addEventListener('click', () => sortRows(btn.dataset.sort, btn.dataset.dir)));
+[q,cat,profile,minScore,minRevenue,source].forEach(el => {{
+  el.addEventListener('input', () => {{ filt(); syncUrl(); }});
+  el.addEventListener('change', () => {{ filt(); syncUrl(); }});
+}});
+document.querySelectorAll('[data-sort]').forEach(btn => btn.addEventListener('click', () => {{
+  const nextDir = btn.classList.contains('table-sort-button') && currentSort.key === btn.dataset.sort
+    ? (currentSort.dir === 'asc' ? 'desc' : 'asc')
+    : (btn.dataset.dir || 'desc');
+  btn.dataset.dir = nextDir;
+  sortRows(btn.dataset.sort, nextDir);
+}}));
 document.querySelectorAll('.app-row').forEach(row => {{
   row.addEventListener('click', (ev) => {{ if(ev.target.closest('.external-link')) return; openAppModal(Number(row.dataset.appIndex)); }});
   row.addEventListener('keydown', (ev) => {{ if(ev.key === 'Enter' || ev.key === ' ') {{ ev.preventDefault(); openAppModal(Number(row.dataset.appIndex)); }} }});
@@ -621,7 +676,7 @@ document.querySelector('#modalClose').addEventListener('click', closeModal);
 document.querySelector('#appModal').addEventListener('click', ev => {{ if(ev.target.id === 'appModal') closeModal(); }});
 document.addEventListener('keydown', ev => {{ if(ev.key === 'Escape') closeModal(); }});
 document.querySelectorAll('#modalTabs button').forEach(btn => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
-filt();
+restoreUrl();
 </script>
 </body>
 </html>"""

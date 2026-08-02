@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import html
 import json
 import os
@@ -8,7 +9,7 @@ import re
 import secrets
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -34,6 +35,7 @@ from app_core.config import (
     PROFILES,
     SCOPES,
     RunConfig,
+    SECRET_KEEP_SENTINEL,
     load_saved_api_settings,
     mask_secret,
     save_api_settings,
@@ -42,19 +44,23 @@ from app_core.config import (
 from app_core.database import (
     RUN_ACTIVE_STATUSES,
     database_backend,
+    claim_next_queued_run,
     create_run,
     delete_run,
     get_app,
     get_run,
     get_stats,
     get_api_usage_stats,
+    get_category_insights,
     init_db,
     list_apps,
     list_logs,
     list_runs,
     now_iso,
     ping_database,
+    queue_snapshot,
     latest_api_tests,
+    requeue_interrupted_runs,
     request_run_status,
     run_progress,
     save_api_test_result,
@@ -102,6 +108,10 @@ app.config.update(
 )
 
 ACTIVE_THREADS: Dict[int, threading.Thread] = {}
+QUEUE_LOCK = threading.Lock()
+QUEUE_DISPATCHER: Optional[threading.Thread] = None
+QUEUE_RECOVERED = False
+QUEUE_WORKER_ID = f"web-{os.getpid()}"
 
 
 def db_path() -> str:
@@ -132,6 +142,8 @@ def before() -> Any:
         return None
 
     init_db(db_path())
+    if request.endpoint != "static":
+        _ensure_queue_dispatcher()
     if request.endpoint in public_endpoints:
         return None
     if _is_authenticated():
@@ -335,27 +347,84 @@ def _run_search_summary(run: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _spawn_worker(run_id: int, cfg: RunConfig, api: Optional[ApiConfig] = None) -> None:
+def _queue_max_workers() -> int:
+    try:
+        return max(1, int(os.getenv("PLAYSTORE_RADAR_MAX_WORKERS", "1")))
+    except ValueError:
+        return 1
+
+
+def _queue_info() -> Dict[str, Any]:
+    info = queue_snapshot(db_path())
+    info["max_workers"] = _queue_max_workers()
+    return info
+
+
+def _cleanup_active_threads() -> None:
+    for run_id, thread in list(ACTIVE_THREADS.items()):
+        if not thread.is_alive():
+            ACTIVE_THREADS.pop(run_id, None)
+
+
+def _run_worker_thread(run_id: int, cfg: RunConfig, api: Optional[ApiConfig] = None) -> None:
     api = api or ApiConfig()
+    try:
+        run_scraper(cfg, api=api, run_id=run_id)
+    except Exception as exc:  # noqa: BLE001
+        update_run(cfg.db_path, run_id, status="failed", finished_at=now_iso(), last_message=str(exc), errors_count=1)
+    finally:
+        ACTIVE_THREADS.pop(run_id, None)
 
-    def worker() -> None:
-        try:
-            run_scraper(cfg, api=api, run_id=run_id)
-        except Exception as exc:  # noqa: BLE001
-            update_run(cfg.db_path, run_id, status="failed", finished_at=now_iso(), last_message=str(exc), errors_count=1)
 
-    t = threading.Thread(target=worker, daemon=True)
+def _spawn_worker(run_id: int, cfg: RunConfig, api: Optional[ApiConfig] = None) -> None:
+    t = threading.Thread(target=_run_worker_thread, args=(run_id, cfg, api), name=f"run-worker-{run_id}", daemon=True)
     ACTIVE_THREADS[run_id] = t
     t.start()
 
 
-def _create_and_start_run(cfg: RunConfig, parent_run_id: Optional[int] = None) -> int:
+def _dispatch_queue_once() -> None:
+    with QUEUE_LOCK:
+        _cleanup_active_threads()
+        while len(ACTIVE_THREADS) < _queue_max_workers():
+            run = claim_next_queued_run(db_path(), QUEUE_WORKER_ID)
+            if not run:
+                break
+            cfg = _cfg_from_run(run)
+            api = ApiConfig()
+            cfg.apply_level_defaults(api)
+            _spawn_worker(int(run["id"]), cfg, api)
+
+
+def _queue_loop() -> None:
+    while True:
+        try:
+            _dispatch_queue_once()
+        except Exception:
+            pass
+        time.sleep(1.5)
+
+
+def _ensure_queue_dispatcher() -> None:
+    global QUEUE_DISPATCHER, QUEUE_RECOVERED
+    if not QUEUE_RECOVERED:
+        with QUEUE_LOCK:
+            if not QUEUE_RECOVERED:
+                requeue_interrupted_runs(db_path())
+                QUEUE_RECOVERED = True
+    if QUEUE_DISPATCHER and QUEUE_DISPATCHER.is_alive():
+        return
+    QUEUE_DISPATCHER = threading.Thread(target=_queue_loop, name="run-queue-dispatcher", daemon=True)
+    QUEUE_DISPATCHER.start()
+
+
+def _create_and_enqueue_run(cfg: RunConfig, parent_run_id: Optional[int] = None) -> int:
     cfg.db_path = db_path()
     cfg.output_dir = str(output_dir())
     api = ApiConfig()
     cfg.apply_level_defaults(api)
     run_id = create_run(cfg, status="queued", parent_run_id=parent_run_id)
-    _spawn_worker(run_id, cfg, api)
+    _ensure_queue_dispatcher()
+    _dispatch_queue_once()
     return run_id
 
 
@@ -462,6 +531,71 @@ for _providers in API_PROVIDER_GROUPS.values():
 
 
 TEST_URL = "https://geo.brdtest.com/welcome.txt?product=unlocker&method=api"
+_API_DASHBOARD_STATS_LOCK = threading.Lock()
+_API_DASHBOARD_STATS_CACHE: Dict[str, Any] = {
+    "loaded_at": 0.0,
+    "refreshing": False,
+    "usage": {},
+    "tests": {},
+}
+
+
+def _refresh_api_dashboard_stats() -> None:
+    usage: Dict[str, Dict[str, Any]] = {}
+    tests: Dict[str, Dict[str, Any]] = {}
+    try:
+        usage = get_api_usage_stats(db_path())
+        tests = latest_api_tests(db_path())
+    except Exception:
+        pass
+    with _API_DASHBOARD_STATS_LOCK:
+        _API_DASHBOARD_STATS_CACHE.update(
+            {
+                "loaded_at": time.time(),
+                "refreshing": False,
+                "usage": usage,
+                "tests": tests,
+            }
+        )
+
+
+def _api_dashboard_stats(max_age_seconds: int = 60) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    with _API_DASHBOARD_STATS_LOCK:
+        loaded_at = float(_API_DASHBOARD_STATS_CACHE.get("loaded_at") or 0)
+        is_fresh = bool(loaded_at and (time.time() - loaded_at) < max_age_seconds)
+        usage = dict(_API_DASHBOARD_STATS_CACHE.get("usage") or {})
+        tests = dict(_API_DASHBOARD_STATS_CACHE.get("tests") or {})
+        if is_fresh:
+            return usage, tests
+        should_load_now = not loaded_at
+        if not _API_DASHBOARD_STATS_CACHE.get("refreshing"):
+            _API_DASHBOARD_STATS_CACHE["refreshing"] = True
+            if not should_load_now:
+                threading.Thread(target=_refresh_api_dashboard_stats, name="api-dashboard-stats", daemon=True).start()
+    if should_load_now:
+        _refresh_api_dashboard_stats()
+        with _API_DASHBOARD_STATS_LOCK:
+            usage = dict(_API_DASHBOARD_STATS_CACHE.get("usage") or {})
+            tests = dict(_API_DASHBOARD_STATS_CACHE.get("tests") or {})
+    return usage, tests
+
+
+def _remember_api_test_result(result: Dict[str, Any]) -> None:
+    provider = str(result.get("provider") or "")
+    if not provider:
+        return
+    with _API_DASHBOARD_STATS_LOCK:
+        tests = dict(_API_DASHBOARD_STATS_CACHE.get("tests") or {})
+        tests[provider] = {
+            "provider": provider,
+            "ok": bool(result.get("ok")),
+            "status": result.get("status") or "",
+            "message": result.get("message") or "",
+            "latency_ms": int(result.get("latency_ms") or 0),
+            "diagnostics_json": json.dumps(result.get("diagnostics") or {}, ensure_ascii=False),
+            "created_at": now_iso(),
+        }
+        _API_DASHBOARD_STATS_CACHE["tests"] = tests
 
 
 def api_field_rows() -> List[Dict[str, Any]]:
@@ -472,25 +606,148 @@ def api_field_rows() -> List[Dict[str, Any]]:
         env_name = str(field["env"])
         value = getattr(api, attr, "") or ""
         source = setting_source(attr, env_name)
+        is_secret = field.get("secret", True)
+        has_value = bool(value)
+        hide_value = bool(is_secret and has_value)
         rows.append(
             {
                 **field,
                 "value": value,
-                "masked": mask_secret(value) if field.get("secret", True) else value,
+                "masked": mask_secret(value) if is_secret else value,
+                "display_value": SECRET_KEEP_SENTINEL if hide_value else value,
+                "display_placeholder": "Valor oculto por seguranca" if hide_value else field.get("placeholder", ""),
                 "source": source,
                 "source_slug": "env" if source == ".env" else source,
                 "is_env": source == ".env",
-                "is_secret": field.get("secret", True),
+                "is_secret": is_secret,
+                "is_masked_secret": hide_value,
             }
         )
     return rows
 
 
+def _short_diag_value(value: Any, max_len: int = 90) -> str:
+    if isinstance(value, bool):
+        return "sim" if value else "nao"
+    if isinstance(value, (int, float)):
+        return f"{value:g}" if isinstance(value, float) else str(value)
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) > max_len:
+        return text[: max_len - 1].rstrip() + "..."
+    return text
+
+
+def _is_interesting_diagnostic_key(key: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
+    blocked = ("token", "secret", "password", "passwd", "apikey", "api_key", "authorization", "credential", "email")
+    if any(part in normalized for part in blocked):
+        return False
+    interesting = (
+        "balance", "saldo", "credit", "credits", "quota", "limit", "remaining", "remain", "usage",
+        "used", "available", "plan", "subscription", "requests", "request_count", "monthly", "reset",
+        "rate", "status",
+    )
+    return any(part in normalized for part in interesting)
+
+
+def _collect_response_diagnostics(data: Any, prefix: str = "", depth: int = 0) -> List[Dict[str, str]]:
+    if depth > 3:
+        return []
+    items: List[Dict[str, str]] = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            label = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(value, (dict, list)):
+                items.extend(_collect_response_diagnostics(value, label, depth + 1))
+            elif _is_interesting_diagnostic_key(label):
+                rendered = _short_diag_value(value)
+                if rendered:
+                    items.append({"label": label, "value": rendered})
+    elif isinstance(data, list):
+        for index, value in enumerate(data[:5]):
+            items.extend(_collect_response_diagnostics(value, f"{prefix}[{index}]", depth + 1))
+    return items
+
+
+def _response_diagnostics(response: Optional[requests.Response]) -> Dict[str, Any]:
+    if response is None:
+        return {}
+    items: List[Dict[str, str]] = []
+    header_labels = {
+        "x-ratelimit-limit": "rate_limit",
+        "x-ratelimit-remaining": "rate_remaining",
+        "x-ratelimit-reset": "rate_reset",
+        "ratelimit-limit": "rate_limit",
+        "ratelimit-remaining": "rate_remaining",
+        "ratelimit-reset": "rate_reset",
+        "retry-after": "retry_after",
+        "x-scraperapi-remaining": "scraperapi_remaining",
+        "spb-cost": "scrapingbee_cost",
+        "spb-initial-status-code": "scrapingbee_initial_status",
+    }
+    for header, label in header_labels.items():
+        value = response.headers.get(header)
+        if value:
+            items.append({"label": label, "value": _short_diag_value(value)})
+    try:
+        items.extend(_collect_response_diagnostics(response.json()))
+    except Exception:
+        pass
+    deduped: List[Dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        pair = (item.get("label", ""), item.get("value", ""))
+        if pair in seen:
+            continue
+        seen.add(pair)
+        deduped.append(item)
+    return {"items": deduped[:10]} if deduped else {}
+
+
+def _diagnostic_items(raw: Any) -> List[Dict[str, str]]:
+    data = _try_json(raw, {}) or {}
+    if not isinstance(data, dict):
+        return []
+    items = data.get("items") or []
+    clean: List[Dict[str, str]] = []
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            label = _short_diag_value(item.get("label"), 44)
+            value = _short_diag_value(item.get("value"), 90)
+            if label and value:
+                clean.append({"label": label, "value": value})
+    return clean[:6]
+
+
+def _balance_label(items: List[Dict[str, str]]) -> str:
+    priority = ("balance", "saldo", "credit", "credits", "quota", "remaining", "remain", "available", "usage")
+    for item in items:
+        label = str(item.get("label") or "").lower()
+        if any(word in label for word in priority):
+            return f"{item.get('label')}: {item.get('value')}"
+    return "nao informado"
+
+
+def _redact_api_message(message: Any, api: ApiConfig) -> str:
+    text = str(message or "")
+    for field in API_FIELDS:
+        if not field.get("secret", True):
+            continue
+        value = getattr(api, str(field.get("attr")), "") or ""
+        if len(value) >= 6:
+            text = text.replace(value, "[oculto]")
+    text = re.sub(r"(?i)((?:api[_-]?key|apikey|token|access_token|secret|password)=)[^&\s]+", r"\1[oculto]", text)
+    text = re.sub(r"(?i)(Authorization:\s*(?:Bearer|Token|Basic)\s+)[^\s,;]+", r"\1[oculto]", text)
+    text = re.sub(r"(?i)((?:Bearer|Token|Basic)\s+)[A-Za-z0-9._:\-]{12,}", r"\1[oculto]", text)
+    return text[:500]
+
+
 def api_cards() -> List[Dict[str, Any]]:
     api = ApiConfig()
     availability = api.available()
-    usage = get_api_usage_stats(db_path())
-    latest_tests = latest_api_tests(db_path())
+    usage, latest_tests = _api_dashboard_stats()
     rows = api_field_rows()
     fields_by_provider: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
@@ -499,7 +756,11 @@ def api_cards() -> List[Dict[str, Any]]:
     for provider in PROVIDER_ORDER:
         fields = fields_by_provider.get(provider, [])
         sources = sorted({f["source"] for f in fields if f.get("value")})
-        test = latest_tests.get(provider, {})
+        test = dict(latest_tests.get(provider, {}) or {})
+        diagnostics = _diagnostic_items(test.get("diagnostics_json"))
+        if test:
+            test["diagnostics"] = diagnostics
+            test["balance_label"] = _balance_label(diagnostics)
         use = usage.get(provider, {})
         cards.append(
             {
@@ -510,9 +771,256 @@ def api_cards() -> List[Dict[str, Any]]:
                 "fields": fields,
                 "test": test,
                 "usage": use,
+                "last_used_at": use.get("last_used_at") or "",
             }
         )
     return cards
+
+
+def quick_api_cards() -> List[Dict[str, Any]]:
+    api = ApiConfig()
+    availability = api.available()
+    try:
+        latest_tests = latest_api_tests(db_path())
+    except Exception:
+        latest_tests = {}
+    cards: List[Dict[str, Any]] = []
+    for provider in PROVIDER_ORDER:
+        test = dict(latest_tests.get(provider, {}) or {})
+        diagnostics = _diagnostic_items(test.get("diagnostics_json"))
+        if test:
+            test["diagnostics"] = diagnostics
+            test["balance_label"] = _balance_label(diagnostics)
+        cards.append(
+            {
+                "provider": provider,
+                "group": next((g for g, names in API_PROVIDER_GROUPS.items() if provider in names), "Outros"),
+                "configured": bool(availability.get(provider)),
+                "sources": ".env/painel" if availability.get(provider) else "vazio",
+                "test": test,
+                "usage": {},
+                "last_used_at": "",
+            }
+        )
+    return cards
+
+
+def api_diagnostic_summary(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    configured = [card for card in cards if card.get("configured")]
+    tested = [card for card in configured if card.get("test")]
+    working = [card for card in tested if card.get("test", {}).get("ok")]
+    failed = [card for card in tested if not card.get("test", {}).get("ok")]
+    latencies = [int(card.get("test", {}).get("latency_ms") or 0) for card in tested if int(card.get("test", {}).get("latency_ms") or 0) > 0]
+    last_tests = [str(card.get("test", {}).get("created_at") or "") for card in tested if card.get("test", {}).get("created_at")]
+    last_uses = [str(card.get("usage", {}).get("last_used_at") or "") for card in cards if card.get("usage", {}).get("last_used_at")]
+    return {
+        "total": len(cards),
+        "configured": len(configured),
+        "working": len(working),
+        "failed": len(failed),
+        "untested": max(0, len(configured) - len(tested)),
+        "avg_latency_ms": round(sum(latencies) / len(latencies)) if latencies else 0,
+        "last_test_at": max(last_tests) if last_tests else "",
+        "last_used_at": max(last_uses) if last_uses else "",
+    }
+
+
+def _score_label(value: Any) -> str:
+    try:
+        return f"{int(round(float(value or 0)))}/100"
+    except Exception:
+        return "0/100"
+
+
+def _dashboard_app(app_row: Dict[str, Any], metric_key: str, metric_label: str, money_metric: bool = False) -> Dict[str, Any]:
+    metric_raw = app_row.get(metric_key)
+    return {
+        "id": app_row.get("id"),
+        "title": app_row.get("title") or "Sem titulo",
+        "developer": app_row.get("developer") or "",
+        "category": app_row.get("categoria") or app_row.get("genre") or "Sem categoria",
+        "icon": app_row.get("icon"),
+        "metric_label": metric_label,
+        "metric_value": _money(metric_raw) if money_metric else _score_label(metric_raw),
+        "score_line": (
+            f"opp {_score_label(app_row.get('opportunity_score'))} | "
+            f"grow {_score_label(app_row.get('growth_score'))} | "
+            f"indie {_score_label(app_row.get('indie_score'))}"
+        ),
+    }
+
+
+def _category_insights() -> List[Dict[str, Any]]:
+    return [
+        {
+            **item,
+            "revenue": _money(item.get("revenue")),
+            "top_app": item.get("top_app") or "Sem destaque",
+        }
+        for item in get_category_insights(db_path(), limit=6)
+    ]
+
+
+def dashboard_insights(runs: List[Dict[str, Any]], cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    top_opportunities = [_dashboard_app(app, "opportunity_score", "oportunidade") for app in list_apps(db_path(), order="opportunity_score", limit=5)]
+    top_growth = [_dashboard_app(app, "growth_score", "crescimento") for app in list_apps(db_path(), order="growth_score", limit=5)]
+    revenue_apps = [
+        app for app in list_apps(db_path(), order="revenue_monthly_usd_base", limit=25)
+        if float(app.get("revenue_monthly_usd_base") or 0) > 0
+    ][:5]
+    top_revenue = [_dashboard_app(app, "revenue_monthly_usd_base", "receita/mes", True) for app in revenue_apps]
+    run_alerts = [
+        run for run in runs
+        if run.get("status") in {"failed", "finished_with_warnings"} or int(run.get("errors_count") or 0) > 0
+    ][:5]
+    api_failures = [
+        card for card in cards
+        if card.get("configured") and card.get("test") and not card.get("test", {}).get("ok")
+    ][:5]
+    return {
+        "top_opportunities": top_opportunities,
+        "top_growth": top_growth,
+        "top_revenue": top_revenue,
+        "categories": _category_insights(),
+        "run_alerts": run_alerts,
+        "api_failures": api_failures,
+        "api_summary": api_diagnostic_summary(cards),
+    }
+
+
+def _compare_app_key(app_row: Dict[str, Any]) -> str:
+    app_id = str(app_row.get("app_id") or "").strip().lower()
+    if app_id:
+        return f"id:{app_id}"
+    title = normalize_for_compare(app_row.get("title"))
+    developer = normalize_for_compare(app_row.get("developer"))
+    return f"text:{title}|{developer}"
+
+
+def normalize_for_compare(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").lower()).strip()
+    return text
+
+
+def _score_total(app_row: Dict[str, Any]) -> float:
+    return (
+        float(app_row.get("opportunity_score") or 0)
+        + float(app_row.get("growth_score") or 0)
+        + float(app_row.get("indie_score") or 0)
+    )
+
+
+def _compare_app_view(app_row: Dict[str, Any], other: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    other = other or {}
+    revenue = float(app_row.get("revenue_monthly_usd_base") or 0)
+    other_revenue = float(other.get("revenue_monthly_usd_base") or 0)
+    score_total = _score_total(app_row)
+    other_score_total = _score_total(other)
+    return {
+        "id": app_row.get("id"),
+        "title": app_row.get("title") or "Sem titulo",
+        "developer": app_row.get("developer") or "",
+        "category": app_row.get("categoria") or app_row.get("genre") or "Sem categoria",
+        "icon": app_row.get("icon"),
+        "score": app_row.get("score") or "N/A",
+        "installs": _compact_number(app_row.get("real_installs") or app_row.get("min_installs") or 0),
+        "opportunity": int(app_row.get("opportunity_score") or 0),
+        "growth": int(app_row.get("growth_score") or 0),
+        "indie": int(app_row.get("indie_score") or 0),
+        "score_total": round(score_total, 1),
+        "score_delta": round(score_total - other_score_total, 1),
+        "revenue": _money(revenue),
+        "revenue_raw": revenue,
+        "revenue_delta": _money(revenue - other_revenue),
+        "revenue_delta_raw": round(revenue - other_revenue, 2),
+        "confidence": app_row.get("financial_confidence") or "",
+    }
+
+
+def _category_compare(base_apps: List[Dict[str, Any]], target_apps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def bucket(apps: List[Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+        grouped: Dict[str, Dict[str, float]] = {}
+        for app_row in apps:
+            category = app_row.get("categoria") or app_row.get("genre") or "Sem categoria"
+            item = grouped.setdefault(category, {"count": 0, "score": 0.0, "revenue": 0.0})
+            item["count"] += 1
+            item["score"] += _score_total(app_row)
+            item["revenue"] += float(app_row.get("revenue_monthly_usd_base") or 0)
+        return grouped
+
+    base = bucket(base_apps)
+    target = bucket(target_apps)
+    rows: List[Dict[str, Any]] = []
+    for category in sorted(set(base) | set(target)):
+        b = base.get(category, {"count": 0, "score": 0.0, "revenue": 0.0})
+        t = target.get(category, {"count": 0, "score": 0.0, "revenue": 0.0})
+        b_avg = b["score"] / b["count"] if b["count"] else 0
+        t_avg = t["score"] / t["count"] if t["count"] else 0
+        rows.append(
+            {
+                "category": category,
+                "base_count": int(b["count"]),
+                "target_count": int(t["count"]),
+                "count_delta": int(t["count"] - b["count"]),
+                "base_avg": round(b_avg, 1),
+                "target_avg": round(t_avg, 1),
+                "score_delta": round(t_avg - b_avg, 1),
+                "base_revenue": _money(b["revenue"]),
+                "target_revenue": _money(t["revenue"]),
+                "revenue_delta": _money(t["revenue"] - b["revenue"]),
+                "revenue_delta_raw": round(t["revenue"] - b["revenue"], 2),
+            }
+        )
+    return sorted(rows, key=lambda row: (abs(row["score_delta"]), abs(row["revenue_delta_raw"]), row["target_count"]), reverse=True)
+
+
+def build_run_comparison(base_id: int, target_id: int) -> Dict[str, Any]:
+    base_run = get_run(db_path(), base_id) or {}
+    target_run = get_run(db_path(), target_id) or {}
+    if not base_run or not target_run:
+        return {}
+    base_apps = list_apps(db_path(), run_id=base_id, order="scores", limit=50_000)
+    target_apps = list_apps(db_path(), run_id=target_id, order="scores", limit=50_000)
+    base_map = {_compare_app_key(app): app for app in base_apps}
+    target_map = {_compare_app_key(app): app for app in target_apps}
+    new_keys = sorted(set(target_map) - set(base_map), key=lambda key: _score_total(target_map[key]), reverse=True)
+    removed_keys = sorted(set(base_map) - set(target_map), key=lambda key: _score_total(base_map[key]), reverse=True)
+    common_keys = sorted(set(base_map) & set(target_map), key=lambda key: _score_total(target_map[key]) - _score_total(base_map[key]), reverse=True)
+    base_revenue = sum(float(app.get("revenue_monthly_usd_base") or 0) for app in base_apps)
+    target_revenue = sum(float(app.get("revenue_monthly_usd_base") or 0) for app in target_apps)
+    base_score = sum(_score_total(app) for app in base_apps) / len(base_apps) if base_apps else 0
+    target_score = sum(_score_total(app) for app in target_apps) / len(target_apps) if target_apps else 0
+    common_views = [_compare_app_view(target_map[key], base_map[key]) for key in common_keys]
+    improved = [app for app in common_views if app["score_delta"] > 0 or app["revenue_delta_raw"] > 0]
+    declined = sorted(common_views, key=lambda app: (app["score_delta"], app["revenue_delta_raw"]))[:25]
+    removed_apps = []
+    for key in removed_keys[:50]:
+        view = _compare_app_view(base_map[key])
+        view["score_delta"] = -abs(view["score_total"])
+        view["revenue_delta_raw"] = -abs(view["revenue_raw"])
+        view["revenue_delta"] = _money(view["revenue_delta_raw"])
+        removed_apps.append(view)
+    return {
+        "base_run": base_run,
+        "target_run": target_run,
+        "base_count": len(base_apps),
+        "target_count": len(target_apps),
+        "new_count": len(new_keys),
+        "removed_count": len(removed_keys),
+        "common_count": len(common_keys),
+        "base_revenue": _money(base_revenue),
+        "target_revenue": _money(target_revenue),
+        "revenue_delta": _money(target_revenue - base_revenue),
+        "revenue_delta_raw": round(target_revenue - base_revenue, 2),
+        "base_score": round(base_score, 1),
+        "target_score": round(target_score, 1),
+        "score_delta": round(target_score - base_score, 1),
+        "new_apps": [_compare_app_view(target_map[key]) for key in new_keys[:50]],
+        "removed_apps": removed_apps,
+        "improved_apps": improved[:50],
+        "declined_apps": declined,
+        "categories": _category_compare(base_apps, target_apps)[:50],
+    }
 
 
 def _status_message(response: requests.Response, max_len: int = 260) -> str:
@@ -520,8 +1028,25 @@ def _status_message(response: requests.Response, max_len: int = 260) -> str:
     try:
         data = response.json()
         if isinstance(data, dict):
+            errors = data.get("errors")
+            if isinstance(errors, list) and errors:
+                first_error = errors[0]
+                if isinstance(first_error, dict):
+                    text = str(first_error.get("message") or first_error.get("error") or "")
+                else:
+                    text = str(first_error)
+            messages = data.get("messages")
+            if not text and isinstance(messages, list) and messages:
+                first_message = messages[0]
+                if isinstance(first_message, dict):
+                    text = str(first_message.get("message") or first_message.get("code") or "")
+                else:
+                    text = str(first_message)
+            result = data.get("result")
+            if not text and isinstance(result, dict) and result.get("status"):
+                text = str(result.get("status"))
             for key in ("message", "error", "status", "name", "username"):
-                if data.get(key):
+                if not text and data.get(key):
                     text = str(data.get(key))
                     break
             if not text:
@@ -532,6 +1057,58 @@ def _status_message(response: requests.Response, max_len: int = 260) -> str:
         text = (response.text or "")[:max_len]
     text = re.sub(r"\s+", " ", text).strip()
     return text or f"HTTP {response.status_code}"
+
+
+def _aws_signing_key(secret: str, date_stamp: str, region: str = "auto", service: str = "s3") -> bytes:
+    key_date = hmac.new(("AWS4" + secret).encode("utf-8"), date_stamp.encode("utf-8"), hashlib.sha256).digest()
+    key_region = hmac.new(key_date, region.encode("utf-8"), hashlib.sha256).digest()
+    key_service = hmac.new(key_region, service.encode("utf-8"), hashlib.sha256).digest()
+    return hmac.new(key_service, b"aws4_request", hashlib.sha256).digest()
+
+
+def _cloudflare_r2_test_response(api: ApiConfig, session: requests.Session) -> requests.Response:
+    if not api.cloudflare_r2_access_key_id or not api.cloudflare_r2_secret_access_key or not api.cloudflare_r2_endpoint:
+        raise ValueError("CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY ou CLOUDFLARE_R2_ENDPOINT vazio")
+
+    endpoint = api.cloudflare_r2_endpoint.rstrip("/")
+    parts = urlsplit(endpoint)
+    if not parts.scheme or not parts.netloc:
+        raise ValueError("CLOUDFLARE_R2_ENDPOINT inválido")
+
+    amz_date = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = amz_date[:8]
+    payload_hash = hashlib.sha256(b"").hexdigest()
+    canonical_headers = (
+        f"host:{parts.netloc}\n"
+        f"x-amz-content-sha256:{payload_hash}\n"
+        f"x-amz-date:{amz_date}\n"
+    )
+    signed_headers = "host;x-amz-content-sha256;x-amz-date"
+    canonical_request = "\n".join(["GET", "/", "", canonical_headers, signed_headers, payload_hash])
+    credential_scope = f"{date_stamp}/auto/s3/aws4_request"
+    string_to_sign = "\n".join([
+        "AWS4-HMAC-SHA256",
+        amz_date,
+        credential_scope,
+        hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+    ])
+    signing_key = _aws_signing_key(api.cloudflare_r2_secret_access_key, date_stamp)
+    signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    authorization = (
+        "AWS4-HMAC-SHA256 "
+        f"Credential={api.cloudflare_r2_access_key_id}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, "
+        f"Signature={signature}"
+    )
+    headers = {
+        "Authorization": authorization,
+        "x-amz-content-sha256": payload_hash,
+        "x-amz-date": amz_date,
+    }
+    try:
+        return session.get(endpoint + "/", headers=headers, timeout=25)
+    except requests.exceptions.SSLError as exc:
+        raise ValueError("Falha TLS/SSL no endpoint R2. Confira se CLOUDFLARE_R2_ENDPOINT usa o Account ID correto e se o endpoint S3 do R2 já está ativo.") from exc
 
 
 def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> Dict[str, Any]:
@@ -576,6 +1153,35 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
                 json={"url": TEST_URL, "formats": ["markdown"]},
                 timeout=30,
             )
+        elif provider == "Hyperbrowser":
+            if not api.hyperbrowser:
+                raise ValueError("HYPERBROWSER_API_KEY vazio")
+            response = session.get(
+                "https://api.hyperbrowser.ai/api/sessions",
+                params={"status": "active", "page": 1},
+                headers={"x-api-key": api.hyperbrowser, "Accept": "application/json"},
+                timeout=25,
+            )
+        elif provider == "Browserless":
+            if not api.browserless or not api.browserless_endpoint:
+                raise ValueError("BROWSERLESS_TOKEN ou BROWSERLESS_ENDPOINT vazio")
+            endpoint = api.browserless_endpoint.rstrip("/")
+            response = session.post(
+                f"{endpoint}/smart-scrape",
+                params={"token": api.browserless},
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                json={"url": "https://example.com", "formats": ["markdown"]},
+                timeout=35,
+            )
+        elif provider == "Browserbase":
+            if not api.browserbase:
+                raise ValueError("BROWSERBASE_API_KEY vazio")
+            response = session.post(
+                "https://api.browserbase.com/v1/fetch",
+                headers={"X-BB-API-Key": api.browserbase, "Content-Type": "application/json", "Accept": "application/json"},
+                json={"url": "https://example.com", "allowRedirects": True, "format": "raw"},
+                timeout=35,
+            )
         elif provider == "ScrapingAnt":
             if not api.scrapingant:
                 raise ValueError("SCRAPINGANT_KEY vazio")
@@ -584,6 +1190,15 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
             if not api.serpapi:
                 raise ValueError("SERPAPI_KEY vazio")
             response = session.get("https://serpapi.com/account", params={"api_key": api.serpapi}, timeout=20)
+        elif provider == "SearchAPI":
+            if not api.searchapi:
+                raise ValueError("SEARCHAPI_KEY vazio")
+            response = session.get(
+                "https://www.searchapi.io/api/v1/me",
+                params={"api_key": api.searchapi},
+                headers={"Accept": "application/json"},
+                timeout=20,
+            )
         elif provider == "Crawlbase":
             if not api.crawlbase:
                 raise ValueError("CRAWLBASE_KEY vazio")
@@ -695,6 +1310,19 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
             if not api.roboflow:
                 raise ValueError("ROBOFLOW_API_KEY vazio")
             response = session.get("https://api.roboflow.com/", params={"api_key": api.roboflow}, timeout=20)
+        elif provider == "Cloudflare API Token":
+            if not api.cloudflare_api_token:
+                raise ValueError("CLOUDFLARE_API_TOKEN vazio")
+            verify_url = "https://api.cloudflare.com/client/v4/user/tokens/verify"
+            if api.cloudflare_account_id:
+                verify_url = f"https://api.cloudflare.com/client/v4/accounts/{api.cloudflare_account_id}/tokens/verify"
+            response = session.get(
+                verify_url,
+                headers={"Authorization": f"Bearer {api.cloudflare_api_token}", "Accept": "application/json"},
+                timeout=20,
+            )
+        elif provider == "Cloudflare R2":
+            response = _cloudflare_r2_test_response(api, session)
         elif provider == "Browse AI":
             if not api.browseai:
                 raise ValueError("BROWSEAI_KEY vazio")
@@ -720,15 +1348,26 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         status = f"HTTP {response.status_code}" if response is not None else "sem resposta"
-        message = _status_message(response) if response is not None else "sem resposta"
+        message = _redact_api_message(_status_message(response) if response is not None else "sem resposta", api)
         ok = bool(response is not None and 200 <= response.status_code < 300)
-        save_api_test_result(db_path(), provider, ok, status, message, latency_ms)
-        return {"provider": provider, "ok": ok, "status": status, "message": message, "latency_ms": latency_ms}
+        diagnostics = _response_diagnostics(response)
+        result = {"provider": provider, "ok": ok, "status": status, "message": message, "latency_ms": latency_ms, "diagnostics": diagnostics}
+        try:
+            save_api_test_result(db_path(), provider, ok, status, message, latency_ms, diagnostics)
+        except Exception:
+            pass
+        _remember_api_test_result(result)
+        return result
     except Exception as exc:  # noqa: BLE001
         latency_ms = int((time.perf_counter() - start) * 1000)
-        message = str(exc)[:500]
-        save_api_test_result(db_path(), provider, False, "erro", message, latency_ms)
-        return {"provider": provider, "ok": False, "status": "erro", "message": message, "latency_ms": latency_ms}
+        message = _redact_api_message(str(exc), api)
+        result = {"provider": provider, "ok": False, "status": "erro", "message": message, "latency_ms": latency_ms, "diagnostics": {}}
+        try:
+            save_api_test_result(db_path(), provider, False, "erro", message, latency_ms, {})
+        except Exception:
+            pass
+        _remember_api_test_result(result)
+        return result
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -771,8 +1410,21 @@ def index():
     stats = get_stats(db_path())
     runs = list_runs(db_path(), 20)
     apps = list_apps(db_path(), limit=24)
+    api_status_cards = quick_api_cards()
+    executive = dashboard_insights(runs, api_status_cards)
     active_runs = [r for r in runs if r.get("status") in RUN_ACTIVE_STATUSES]
-    return render_template("index.html", api=api, stats=stats, runs=runs, active_runs=active_runs, apps=apps)
+    queue = _queue_info()
+    return render_template(
+        "index.html",
+        api=api,
+        stats=stats,
+        runs=runs,
+        active_runs=active_runs,
+        apps=apps,
+        api_status_cards=api_status_cards,
+        executive=executive,
+        queue=queue,
+    )
 
 
 @app.route("/start", methods=["POST"])
@@ -794,14 +1446,40 @@ def start_run():
         data["subcategory_codes"] = ""
 
     cfg = RunConfig.from_dict(data)
-    run_id = _create_and_start_run(cfg)
-    flash(f"Run #{run_id} iniciado. Agora é deixar o robozinho suar silício.", "success")
+    run_id = _create_and_enqueue_run(cfg)
+    flash(f"Run #{run_id} entrou na fila. O despachante inicia quando houver worker livre.", "success")
     return redirect(url_for("run_detail", run_id=run_id))
 
 
 @app.route("/runs")
 def runs_page():
-    return render_template("runs.html", runs=list_runs(db_path(), 200))
+    return render_template("runs.html", runs=list_runs(db_path(), 200), queue=_queue_info())
+
+
+@app.route("/runs/compare")
+def runs_compare_page():
+    runs = list_runs(db_path(), 300)
+    base_arg = request.args.get("base_id") or request.args.get("base")
+    target_arg = request.args.get("target_id") or request.args.get("target")
+    try:
+        base_id = int(base_arg) if base_arg else 0
+    except ValueError:
+        base_id = 0
+    try:
+        target_id = int(target_arg) if target_arg else 0
+    except ValueError:
+        target_id = 0
+    if (not base_id or not target_id) and len(runs) >= 2:
+        target_id = target_id or int(runs[0]["id"])
+        base_id = base_id or int(runs[1]["id"])
+    comparison = build_run_comparison(base_id, target_id) if base_id and target_id and base_id != target_id else {}
+    return render_template(
+        "runs_compare.html",
+        runs=runs,
+        base_id=base_id,
+        target_id=target_id,
+        comparison=comparison,
+    )
 
 
 @app.route("/run/<int:run_id>")
@@ -812,7 +1490,7 @@ def run_detail(run_id: int):
         return redirect(url_for("index"))
     logs = list_logs(db_path(), run_id, 200)
     apps = list_apps(db_path(), run_id=run_id, order="opportunity_score", limit=200)
-    return render_template("run_detail.html", run=run, run_summary=_run_search_summary(run), logs=logs, apps=apps)
+    return render_template("run_detail.html", run=run, run_summary=_run_search_summary(run), logs=logs, apps=apps, queue=_queue_info())
 
 
 @app.route("/run/<int:run_id>/pause", methods=["POST"])
@@ -821,7 +1499,10 @@ def pause_run(run_id: int):
     if not run:
         flash("Run não encontrado.", "warning")
         return redirect(url_for("runs_page"))
-    if run.get("status") in {"running", "queued"}:
+    if run.get("status") == "queued":
+        update_run(db_path(), run_id, status="paused", last_message="Run pausada antes de iniciar.")
+        flash(f"Run #{run_id} pausada na fila.", "warning")
+    elif run.get("status") == "running":
         request_run_status(db_path(), run_id, "pause_requested", "Pausa solicitada. O worker vai parar no próximo ponto seguro.")
         flash(f"Pausa solicitada para a Run #{run_id}.", "warning")
     else:
@@ -836,8 +1517,15 @@ def resume_run(run_id: int):
         flash("Run não encontrado.", "warning")
         return redirect(url_for("runs_page"))
     if run.get("status") in {"paused", "pause_requested"}:
-        request_run_status(db_path(), run_id, "running", "Retomando coleta.", "success")
-        flash(f"Run #{run_id} retomada.", "success")
+        worker = ACTIVE_THREADS.get(run_id)
+        if worker and worker.is_alive():
+            update_run(db_path(), run_id, status="running", last_message="Retomando coleta.")
+            flash(f"Run #{run_id} retomada.", "success")
+        else:
+            update_run(db_path(), run_id, status="queued", last_message="Run retomada e devolvida para a fila.")
+            _ensure_queue_dispatcher()
+            _dispatch_queue_once()
+            flash(f"Run #{run_id} voltou para a fila.", "success")
     else:
         flash("Essa busca não está pausada.", "info")
     return redirect(request.referrer or url_for("run_detail", run_id=run_id))
@@ -849,7 +1537,11 @@ def cancel_run(run_id: int):
     if not run:
         flash("Run não encontrado.", "warning")
         return redirect(url_for("runs_page"))
-    if _is_active(run):
+    worker = ACTIVE_THREADS.get(run_id)
+    if run.get("status") == "queued" or (run.get("status") == "paused" and not (worker and worker.is_alive())):
+        update_run(db_path(), run_id, status="cancelled", finished_at=now_iso(), last_message="Cancelada antes de iniciar.")
+        flash(f"Run #{run_id} cancelada antes de iniciar.", "warning")
+    elif _is_active(run):
         request_run_status(db_path(), run_id, "cancel_requested", "Cancelamento solicitado. Mantendo o histórico e os apps já salvos.")
         flash(f"Cancelamento solicitado para a Run #{run_id}.", "warning")
     else:
@@ -865,6 +1557,10 @@ def delete_run_route(run_id: int):
         flash("Run já não existe.", "info")
         return redirect(url_for("runs_page"))
     worker = ACTIVE_THREADS.get(run_id)
+    if run.get("status") == "queued":
+        delete_run(db_path(), run_id)
+        flash(f"Run #{run_id} removida da fila.", "success")
+        return redirect(url_for("runs_page"))
     if _is_active(run) and worker and worker.is_alive():
         request_run_status(db_path(), run_id, "delete_requested", "Exclusão solicitada. A coleta será interrompida e removida.")
         flash(f"Exclusão solicitada para a Run #{run_id}. Ela some quando o worker chegar no próximo ponto seguro.", "warning")
@@ -881,7 +1577,7 @@ def rerun_run(run_id: int):
         flash("Run base não encontrada.", "warning")
         return redirect(url_for("runs_page"))
     cfg = _cfg_from_run(run)
-    new_run_id = _create_and_start_run(cfg, parent_run_id=run_id)
+    new_run_id = _create_and_enqueue_run(cfg, parent_run_id=run_id)
     flash(f"Busca refeita: Run #{new_run_id} criada a partir da Run #{run_id}.", "success")
     return redirect(url_for("run_detail", run_id=new_run_id))
 
@@ -897,7 +1593,7 @@ def restart_run(run_id: int):
         request_run_status(db_path(), run_id, "restart_requested", "Reinício solicitado. Esta coleta será parada e uma nova será aberta.")
     else:
         update_run(db_path(), run_id, status="cancelled", finished_at=now_iso(), last_message="Reiniciada manualmente em outra run.")
-    new_run_id = _create_and_start_run(cfg, parent_run_id=run_id)
+    new_run_id = _create_and_enqueue_run(cfg, parent_run_id=run_id)
     flash(f"Run #{run_id} reiniciada como Run #{new_run_id}.", "success")
     return redirect(url_for("run_detail", run_id=new_run_id))
 
@@ -912,9 +1608,21 @@ def api_run_status(run_id: int):
 def settings_page():
     cards = api_cards()
     fields = api_field_rows()
+    card_lookup = {str(card.get("provider")): card for card in cards}
     cards_by_group = {group: [c for c in cards if c.get("group") == group] for group in API_PROVIDER_GROUPS}
     fields_by_group = {group: [f for f in fields if f.get("group") == group] for group in API_PROVIDER_GROUPS}
-    return render_template("settings.html", api=ApiConfig(), cards=cards, fields=fields, cards_by_group=cards_by_group, fields_by_group=fields_by_group, api_groups=API_PROVIDER_GROUPS)
+    diagnostic_summary = api_diagnostic_summary(cards)
+    return render_template(
+        "settings.html",
+        api=ApiConfig(),
+        cards=cards,
+        fields=fields,
+        card_lookup=card_lookup,
+        cards_by_group=cards_by_group,
+        fields_by_group=fields_by_group,
+        api_groups=API_PROVIDER_GROUPS,
+        diagnostic_summary=diagnostic_summary,
+    )
 
 
 @app.route("/settings/apis", methods=["POST"])
@@ -1074,6 +1782,8 @@ def api_run_apps(run_id: int):
 def health():
     try:
         ok = ping_database(db_path())
+        if ok:
+            _ensure_queue_dispatcher()
         return jsonify({"status": "ok" if ok else "degraded", "database": database_backend(db_path())}), 200 if ok else 503
     except Exception as exc:  # noqa: BLE001
         return jsonify({

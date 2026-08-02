@@ -10,18 +10,50 @@
       <p class="text-muted mb-0">Aqui é o painel de comando: pausar, continuar, cancelar, excluir, reiniciar e refazer sem drama.</p>
     </div>
     <div class="d-flex flex-wrap gap-2 align-items-center">
+      <a class="btn btn-outline-primary rounded-pill" href="{{ url_for('runs_compare_page') }}"><i class="bi bi-columns-gap me-1"></i>Comparar runs</a>
       <button type="button" class="btn btn-outline-secondary rounded-pill" data-export-all-fmt="html" data-export-all-label="HTML" title="Exportar todas as buscas como HTML"><i class="bi bi-filetype-html me-1"></i>Exportar tudo como HTML</button>
       <button type="button" class="btn btn-outline-secondary rounded-pill" data-export-all-fmt="json" data-export-all-label="JSON" title="Exportar todas as buscas como JSON"><i class="bi bi-filetype-json me-1"></i>Exportar tudo como JSON</button>
       <button type="button" class="btn btn-outline-secondary rounded-pill" data-export-all-fmt="csv" data-export-all-label="CSV" title="Exportar todas as buscas como CSV"><i class="bi bi-filetype-csv me-1"></i>Exportar tudo como CSV</button>
       <a class="btn btn-primary rounded-pill" href="{{ url_for('index') }}"><i class="bi bi-plus-circle me-1"></i>Nova busca</a>
     </div>
   </div>
+  <div class="queue-strip mb-3">
+    <div><span>na fila</span><b>{{ queue.queued or 0 }}</b></div>
+    <div><span>rodando</span><b>{{ queue.running or 0 }}</b></div>
+    <div><span>proximo job</span><b>{{ ('#' ~ queue.next_run_id) if queue.next_run_id else 'nenhum' }}</b></div>
+    <div><span>workers</span><b>{{ queue.max_workers or 1 }}</b></div>
+  </div>
   <div class="table-responsive">
-    <table class="table align-middle history-table">
-      <thead><tr><th>ID</th><th>Criado</th><th>Status</th><th>Escopo</th><th>Nível</th><th>Perfil</th><th>Qtd.</th><th>Apps</th><th>Mensagem</th><th>Controles</th></tr></thead>
+    <table class="table align-middle history-table" id="runsTable" data-sortable-table>
+      <thead>
+        <tr>
+          <th><button type="button" class="table-sort-button" data-sort-key="id" data-sort-type="number">ID</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="created" data-sort-type="date">Criado</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="status" data-sort-type="status">Status</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="scope" data-sort-type="text" data-sort-default="asc">Escopo</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="level" data-sort-type="text" data-sort-default="asc">Nível</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="profile" data-sort-type="text" data-sort-default="asc">Perfil</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="quantity" data-sort-type="number">Qtd.</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="apps" data-sort-type="number">Apps</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="message" data-sort-type="text" data-sort-default="asc">Mensagem</button></th>
+          <th>Controles</th>
+        </tr>
+      </thead>
       <tbody>
       {% for r in runs %}
-        <tr class="{{ 'table-active-run' if r.status in RUN_ACTIVE_STATUSES else '' }}">
+        <tr
+          class="{{ 'table-active-run' if r.status in RUN_ACTIVE_STATUSES else '' }}"
+          data-sort-row
+          data-sort-id="{{ r.id or 0 }}"
+          data-sort-created="{{ r.created_at or '' }}"
+          data-sort-status="{{ r.status or '' }}"
+          data-sort-scope="{{ r.scope or '' }}"
+          data-sort-level="{{ r.level or '' }}"
+          data-sort-profile="{{ r.profile or '' }}"
+          data-sort-quantity="{{ r.quantity or 0 }}"
+          data-sort-apps="{{ r.apps_kept or 0 }}"
+          data-sort-message="{{ r.last_message or '' }}"
+        >
           <td><b>#{{ r.id }}</b></td>
           <td class="small text-muted">{{ r.created_at }}</td>
           <td><span class="status {{ r.status }}">{{ r.status }}</span></td>

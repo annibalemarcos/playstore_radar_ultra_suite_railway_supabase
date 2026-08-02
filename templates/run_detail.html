@@ -52,6 +52,9 @@
   </div>
 
   <div class="run-progress-wrap">
+    {% if run.status == 'queued' %}
+      <div class="queue-inline mb-2"><i class="bi bi-list-task"></i> Aguardando worker livre · {{ queue.queued or 0 }} job(s) na fila · limite {{ queue.max_workers or 1 }} worker(s)</div>
+    {% endif %}
     <div class="progress progress-soft">
       <div id="bar" class="progress-bar" style="width: {{ run_summary.progress_pct }}%"></div>
     </div>
@@ -172,8 +175,19 @@
           <a href="{{ url_for('apps_page', run_id=run.id) }}" class="btn btn-sm btn-light rounded-pill"><i class="bi bi-table me-1"></i>abrir tabela</a>
         </div>
         <div class="table-responsive live-app-table-wrap">
-          <table class="table table-hover align-middle apps-table compact-app-table mb-0">
-            <thead><tr><th>App</th><th>Categoria</th><th>Nota</th><th>Installs</th><th>Scores</th><th>Receita/mês</th><th>Conf.</th><th></th></tr></thead>
+          <table class="table table-hover align-middle apps-table compact-app-table mb-0" id="runAppsTable" data-sortable-table>
+            <thead>
+              <tr>
+                <th><button type="button" class="table-sort-button" data-sort-key="app" data-sort-type="text" data-sort-default="asc">App</button></th>
+                <th><button type="button" class="table-sort-button" data-sort-key="category" data-sort-type="text" data-sort-default="asc">Categoria</button></th>
+                <th><button type="button" class="table-sort-button" data-sort-key="score" data-sort-type="number">Nota</button></th>
+                <th><button type="button" class="table-sort-button" data-sort-key="installs" data-sort-type="number">Installs</button></th>
+                <th><button type="button" class="table-sort-button" data-sort-key="scores" data-sort-type="number">Scores</button></th>
+                <th><button type="button" class="table-sort-button" data-sort-key="revenue" data-sort-type="number">Receita/mês</button></th>
+                <th><button type="button" class="table-sort-button" data-sort-key="confidence" data-sort-type="text" data-sort-default="asc">Conf.</button></th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody id="appsGrid">
               {% for a in apps %}{% include "partials_app_table_row.html" %}{% else %}<tr><td colspan="8" class="text-muted empty-apps">Ainda nenhum app salvo.</td></tr>{% endfor %}
             </tbody>
@@ -214,15 +228,21 @@ function appCard(a){
   const title = escapeHtml(a.title || 'Sem título');
   const dev = escapeHtml(a.developer || 'Dev não informado');
   const cat = escapeHtml(a.categoria || a.genre || '-');
+  const scoreValue = Number(a.score || 0) || 0;
+  const installsValue = Number(a.real_installs || a.min_installs || 0) || 0;
+  const oppValue = Number(a.opportunity_score || 0) || 0;
+  const growValue = Number(a.growth_score || 0) || 0;
+  const indieValue = Number(a.indie_score || 0) || 0;
+  const revenueValue = Number(a.revenue_monthly_usd_base || 0) || 0;
   const score = escapeHtml(a.score || 'N/A');
   const installs = escapeHtml(a.real_installs || a.min_installs || a.installs || '-');
-  const opp = escapeHtml(a.opportunity_score ?? 0);
-  const grow = escapeHtml(a.growth_score ?? 0);
-  const indie = escapeHtml(a.indie_score ?? 0);
-  const rev = normalizeNumber(a.revenue_monthly_usd_base || 0);
+  const opp = escapeHtml(oppValue);
+  const grow = escapeHtml(growValue);
+  const indie = escapeHtml(indieValue);
+  const rev = normalizeNumber(revenueValue);
   const profit = normalizeNumber(a.profit_monthly_usd_base || 0);
   const conf = escapeHtml(a.financial_confidence || '-');
-  return `<tr class="compact-app-row">
+  return `<tr class="compact-app-row" data-sort-row data-sort-app="${escapeHtml(a.title || '')}" data-sort-category="${escapeHtml(a.categoria || a.genre || '')}" data-sort-score="${scoreValue}" data-sort-installs="${installsValue}" data-sort-scores="${oppValue + growValue + indieValue}" data-sort-revenue="${revenueValue}" data-sort-confidence="${conf}" data-sort-id="${escapeHtml(a.id || 0)}">
     <td class="app-cell"><div class="d-flex gap-2 align-items-center">${icon}<div class="min-w-0"><b class="app-row-title">${title}</b><br><span class="text-muted small text-truncate d-block">${dev}</span></div></div></td>
     <td>${cat}</td><td>${score}</td><td>${installs}</td>
     <td><span class="chip">opp ${opp}</span> <span class="chip">grow ${grow}</span> <span class="chip">indie ${indie}</span></td>
@@ -240,6 +260,7 @@ async function refreshApps(){
   grid.innerHTML = data.apps.length ? data.apps.map(appCard).join('') : `<tr><td colspan="8" class="text-muted empty-apps">Ainda nenhum app salvo.</td></tr>`;
   const count = document.querySelector('#appsAccordionCount');
   if(count) count.textContent = `${normalizeNumber(data.apps.length)} apps`;
+  window.PlayRadarSort?.refresh(document.querySelector('#runAppsTable'));
 }
 
 async function pollRun(){

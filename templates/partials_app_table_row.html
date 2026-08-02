@@ -1,4 +1,15 @@
-<tr class="compact-app-row">
+<tr
+  class="compact-app-row"
+  data-sort-row
+  data-sort-app="{{ (a.title or '')|lower }}"
+  data-sort-category="{{ (a.categoria or a.genre or '')|lower }}"
+  data-sort-score="{{ a.score or 0 }}"
+  data-sort-installs="{{ a.real_installs or a.min_installs or 0 }}"
+  data-sort-scores="{{ (a.opportunity_score or 0) + (a.growth_score or 0) + (a.indie_score or 0) }}"
+  data-sort-revenue="{{ a.revenue_monthly_usd_base or 0 }}"
+  data-sort-confidence="{{ a.financial_confidence or '' }}"
+  data-sort-id="{{ a.id or 0 }}"
+>
   <td class="app-cell">
     <div class="d-flex gap-2 align-items-center">
       {% if a.icon %}<img class="tiny-icon" src="{{ a.icon }}" alt="Ícone">{% else %}<div class="tiny-icon app-placeholder">?</div>{% endif %}

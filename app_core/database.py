@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS logs (
 CREATE TABLE IF NOT EXISTS api_tests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT NOT NULL, ok INTEGER NOT NULL DEFAULT 0, status TEXT,
-    message TEXT, latency_ms INTEGER, created_at TEXT NOT NULL
+    message TEXT, latency_ms INTEGER, diagnostics_json TEXT, created_at TEXT NOT NULL
 );
 """
 
@@ -282,6 +282,8 @@ def init_db(db_path: str | Path | None = None, force: bool = False) -> None:
             for column, ddl_type in extra_columns.items():
                 if not _column_exists(con, "runs", column):
                     con.execute(f"ALTER TABLE runs ADD COLUMN {column} {ddl_type}")
+            if not _column_exists(con, "api_tests", "diagnostics_json"):
+                con.execute("ALTER TABLE api_tests ADD COLUMN diagnostics_json TEXT")
         _INITIALIZED_TARGETS.add(target)
 
 
@@ -307,6 +309,95 @@ def create_run(cfg: RunConfig, status: str = "queued", parent_run_id: Optional[i
             return int(row["id"])
         cur = con.execute(query, params)
         return int(cur.lastrowid)
+
+
+def claim_next_queued_run(db_path: str | Path, worker_id: str = "") -> Optional[Dict[str, Any]]:
+    init_db(db_path)
+    with connect(db_path) as con:
+        row = con.execute(
+            """
+            SELECT *
+            FROM runs
+            WHERE status = 'queued'
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            return None
+        run_id = int(row["id"])
+        claimed_message = f"Fila: job iniciado{f' por {worker_id}' if worker_id else ''}."
+        updated = con.execute(
+            """
+            UPDATE runs
+            SET status = 'running',
+                started_at = COALESCE(started_at, ?),
+                updated_at = ?,
+                last_message = ?
+            WHERE id = ? AND status = 'queued'
+            """,
+            (now_iso(), now_iso(), claimed_message, run_id),
+        )
+        if getattr(updated, "rowcount", 0) != 1:
+            return None
+        claimed = con.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+    return row_to_dict(claimed)
+
+
+def requeue_interrupted_runs(db_path: str | Path) -> int:
+    init_db(db_path)
+    now = now_iso()
+    with connect(db_path) as con:
+        con.execute(
+            """
+            UPDATE runs
+            SET status = 'paused',
+                updated_at = ?,
+                last_message = 'Coleta pausada apos reinicio do app. Clique em continuar para voltar para a fila.'
+            WHERE status = 'pause_requested'
+            """,
+            (now,),
+        )
+        con.execute(
+            """
+            UPDATE runs
+            SET status = 'cancelled',
+                finished_at = COALESCE(finished_at, ?),
+                updated_at = ?,
+                last_message = 'Coleta cancelada apos reinicio do app.'
+            WHERE status IN ('cancel_requested','restart_requested')
+            """,
+            (now, now),
+        )
+        delete_rows = con.execute("SELECT id FROM runs WHERE status = 'delete_requested'").fetchall()
+        deleted_ids = [int(row["id"]) for row in delete_rows]
+        for run_id in deleted_ids:
+            con.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        updated = con.execute(
+            """
+            UPDATE runs
+            SET status = 'queued',
+                updated_at = ?,
+                last_message = 'Run recuperada apos reinicio/deploy; voltou para a fila.'
+            WHERE status = 'running'
+            """,
+            (now,),
+        )
+    return int(getattr(updated, "rowcount", 0) or 0)
+
+
+def queue_snapshot(db_path: str | Path) -> Dict[str, Any]:
+    init_db(db_path)
+    with connect(db_path) as con:
+        queued = con.execute("SELECT COUNT(*) c FROM runs WHERE status = 'queued'").fetchone()["c"] or 0
+        running = con.execute("SELECT COUNT(*) c FROM runs WHERE status = 'running'").fetchone()["c"] or 0
+        next_run = con.execute("SELECT id, created_at FROM runs WHERE status = 'queued' ORDER BY id ASC LIMIT 1").fetchone()
+    return {
+        "queued": int(queued),
+        "running": int(running),
+        "next_run_id": int(next_run["id"]) if next_run else None,
+        "next_created_at": next_run["created_at"] if next_run else None,
+    }
 
 
 def update_run(db_path: str | Path, run_id: int, **kwargs: Any) -> None:
@@ -595,6 +686,58 @@ def get_stats(db_path: str | Path) -> Dict[str, Any]:
     }
 
 
+def get_category_insights(db_path: str | Path, limit: int = 6) -> List[Dict[str, Any]]:
+    init_db(db_path)
+    category_expr = "COALESCE(NULLIF(categoria, ''), NULLIF(genre, ''), 'Sem categoria')"
+    score_expr = (
+        "(AVG(COALESCE(opportunity_score,0)) * 0.45) + "
+        "(AVG(COALESCE(growth_score,0)) * 0.35) + "
+        "(AVG(COALESCE(indie_score,0)) * 0.20)"
+    )
+    with connect(db_path) as con:
+        rows = con.execute(
+            f"""
+            SELECT
+                {category_expr} AS category,
+                COUNT(*) AS count,
+                AVG(COALESCE(opportunity_score,0)) AS avg_opp,
+                AVG(COALESCE(growth_score,0)) AS avg_growth,
+                AVG(COALESCE(indie_score,0)) AS avg_indie,
+                SUM(COALESCE(revenue_monthly_usd_base,0)) AS revenue,
+                {score_expr} AS score
+            FROM apps
+            GROUP BY {category_expr}
+            ORDER BY score DESC, count DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        insights: List[Dict[str, Any]] = []
+        for row in rows:
+            top = con.execute(
+                f"""
+                SELECT title
+                FROM apps
+                WHERE {category_expr} = ?
+                ORDER BY opportunity_score IS NULL ASC, opportunity_score DESC, id DESC
+                LIMIT 1
+                """,
+                (row["category"],),
+            ).fetchone()
+            insights.append(
+                {
+                    "category": row["category"],
+                    "count": int(row["count"] or 0),
+                    "score": round(float(row["score"] or 0), 1),
+                    "avg_opp": round(float(row["avg_opp"] or 0), 1),
+                    "avg_growth": round(float(row["avg_growth"] or 0), 1),
+                    "revenue": float(row["revenue"] or 0),
+                    "top_app": top["title"] if top else "",
+                }
+            )
+    return insights
+
+
 def run_progress(db_path: str | Path, run_id: int) -> Dict[str, Any]:
     run = get_run(db_path, run_id) or {}
     if not run:
@@ -609,12 +752,21 @@ def run_progress(db_path: str | Path, run_id: int) -> Dict[str, Any]:
     return run
 
 
-def save_api_test_result(db_path: str | Path, provider: str, ok: bool, status: str, message: str, latency_ms: int = 0) -> None:
+def save_api_test_result(
+    db_path: str | Path,
+    provider: str,
+    ok: bool,
+    status: str,
+    message: str,
+    latency_ms: int = 0,
+    diagnostics: Optional[Dict[str, Any]] = None,
+) -> None:
     init_db(db_path)
+    diagnostics_json = safe_json(diagnostics or {})
     with connect(db_path) as con:
         con.execute(
-            "INSERT INTO api_tests(provider, ok, status, message, latency_ms, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (provider, 1 if ok else 0, status, message[:1000], int(latency_ms or 0), now_iso()),
+            "INSERT INTO api_tests(provider, ok, status, message, latency_ms, diagnostics_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (provider, 1 if ok else 0, status, message[:1000], int(latency_ms or 0), diagnostics_json, now_iso()),
         )
 
 
@@ -642,8 +794,12 @@ def get_api_usage_stats(db_path: str | Path) -> Dict[str, Dict[str, Any]]:
         "Bright Data": ["Bright Data", "BrightData"],
         "Apify": ["Apify"],
         "Firecrawl": ["Firecrawl"],
+        "Hyperbrowser": ["Hyperbrowser"],
+        "Browserless": ["Browserless"],
+        "Browserbase": ["Browserbase"],
         "ScrapingAnt": ["ScrapingAnt"],
         "SerpAPI": ["SerpAPI", "serpapi_json_preview"],
+        "SearchAPI": ["SearchAPI", "_searchapi_raw_preview", "searchapi_json_preview"],
         "Crawlbase": ["Crawlbase"],
         "Decodo": ["Decodo", "decodo"],
         "Brave Search": ["Brave Search", "brave_search", "brave_search_json_preview"],
@@ -673,35 +829,44 @@ def get_api_usage_stats(db_path: str | Path) -> Dict[str, Dict[str, Any]]:
         "AbstractAPI": ["AbstractAPI"],
         "WolframAlpha": ["WolframAlpha"],
         "Ollama": ["Ollama"],
+        "Cloudflare API Token": ["Cloudflare API Token"],
+        "Cloudflare R2": ["Cloudflare R2", "cloudflare_r2"],
     }
-    out: Dict[str, Dict[str, Any]] = {}
+    alias_map = {provider: [needle.lower() for needle in needles] for provider, needles in aliases.items()}
+    app_counts: Dict[str, int] = {provider: 0 for provider in aliases}
+    log_counts: Dict[str, int] = {provider: 0 for provider in aliases}
+    last_used: Dict[str, Optional[str]] = {provider: None for provider in aliases}
+
+    def remember(provider: str, created_at: Any, target: Dict[str, int]) -> None:
+        target[provider] += 1
+        if created_at and (last_used[provider] is None or str(created_at) > str(last_used[provider])):
+            last_used[provider] = str(created_at)
+
     with connect(db_path) as con:
         total_apps = con.execute("SELECT COUNT(*) c FROM apps").fetchone()["c"] or 0
-        for provider, needles in aliases.items():
-            where_parts = []
-            params: List[Any] = []
-            for needle in needles:
-                where_parts.append("(external_sources_used LIKE ? OR raw_json LIKE ?)")
-                params.extend([f"%{needle}%", f"%{needle}%"])
-            source_row = con.execute(
-                f"SELECT COUNT(*) c, MAX(created_at) last_at FROM apps WHERE {' OR '.join(where_parts)}",
-                params,
-            ).fetchone()
-            log_where = " OR ".join("message LIKE ?" for _ in needles)
-            log_params = [f"%{needle}%" for needle in needles]
-            log_row = con.execute(
-                f"SELECT COUNT(*) c, MAX(created_at) last_at FROM logs WHERE {log_where}",
-                log_params,
-            ).fetchone()
-            app_count = int(source_row["c"] or 0)
-            log_count = int(log_row["c"] or 0)
-            last_candidates = [source_row["last_at"], log_row["last_at"]]
-            last_at = max([x for x in last_candidates if x] or [None])
-            out[provider] = {
-                "apps_enriched": app_count,
-                "log_mentions": log_count,
-                "call_estimate": app_count + log_count,
-                "last_used_at": last_at,
-                "share_pct": round((app_count * 100 / total_apps), 1) if total_apps else 0,
-            }
+        app_rows = con.execute("SELECT external_sources_used, raw_json, created_at FROM apps").fetchall()
+        for row in app_rows:
+            haystack = f"{row['external_sources_used'] or ''} {row['raw_json'] or ''}".lower()
+            for provider, needles in alias_map.items():
+                if any(needle in haystack for needle in needles):
+                    remember(provider, row["created_at"], app_counts)
+
+        log_rows = con.execute("SELECT message, created_at FROM logs").fetchall()
+        for row in log_rows:
+            haystack = str(row["message"] or "").lower()
+            for provider, needles in alias_map.items():
+                if any(needle in haystack for needle in needles):
+                    remember(provider, row["created_at"], log_counts)
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for provider in aliases:
+        app_count = app_counts[provider]
+        log_count = log_counts[provider]
+        out[provider] = {
+            "apps_enriched": app_count,
+            "log_mentions": log_count,
+            "call_estimate": app_count + log_count,
+            "last_used_at": last_used[provider],
+            "share_pct": round((app_count * 100 / total_apps), 1) if total_apps else 0,
+        }
     return out

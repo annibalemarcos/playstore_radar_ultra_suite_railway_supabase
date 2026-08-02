@@ -6,6 +6,7 @@ As APIs extras entram para: pegar HTML/render, completar metadados, acessar SERP
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Dict, List, Tuple
 from urllib.parse import parse_qs, quote_plus, urlparse
 
@@ -40,6 +41,12 @@ class ExternalClient:
         providers = []
         if self.api.firecrawl:
             providers.append(self._firecrawl)
+        if self.api.hyperbrowser:
+            providers.append(self._hyperbrowser)
+        if self.api.browserless and self.api.browserless_endpoint:
+            providers.append(self._browserless)
+        if self.api.browserbase:
+            providers.append(self._browserbase)
         if self.api.scrapingbee:
             providers.append(self._scrapingbee)
         if self.api.scrapingant:
@@ -246,6 +253,96 @@ class ExternalClient:
             pass
         return "AlterLab", text, meta
 
+    @classmethod
+    def _payload_text(cls, data: Any) -> str:
+        if isinstance(data, str):
+            return data
+        if isinstance(data, dict):
+            for key in ("markdown", "html", "content", "text"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+            for key in ("data", "result", "page", "document"):
+                value = data.get(key)
+                text = cls._payload_text(value)
+                if text:
+                    return text
+        if isinstance(data, list):
+            for item in data:
+                text = cls._payload_text(item)
+                if text:
+                    return text
+        return ""
+
+    def _hyperbrowser(self, url: str, cfg: RunConfig) -> Tuple[str, str, Dict[str, Any]]:
+        headers = {"x-api-key": self.api.hyperbrowser, "Content-Type": "application/json", "Accept": "application/json"}
+        payload: Dict[str, Any] = {
+            "url": url,
+            "formats": ["markdown", "html"],
+            "scrapeOptions": {"onlyMainContent": False},
+        }
+        res = self._safe_post("https://api.hyperbrowser.ai/api/scrape", headers=headers, json=payload, timeout=max(45, self.api.timeout))
+        meta: Dict[str, Any] = {"status": res.status_code}
+        text = res.text
+        try:
+            data = res.json()
+            meta["json"] = data
+            text = self._payload_text(data) or text
+            job_id = (data.get("id") or data.get("jobId")) if isinstance(data, dict) else ""
+            if job_id and len(str(text).strip()) <= 120:
+                for _attempt in range(8):
+                    time.sleep(1.5)
+                    poll = self._safe_get(f"https://api.hyperbrowser.ai/api/scrape/{job_id}", headers={"x-api-key": self.api.hyperbrowser, "Accept": "application/json"}, timeout=max(45, self.api.timeout))
+                    meta["poll_status"] = poll.status_code
+                    try:
+                        poll_data = poll.json()
+                    except Exception:
+                        poll_data = {"text": poll.text}
+                    meta["poll_json"] = poll_data
+                    text = self._payload_text(poll_data) or text
+                    status = str(poll_data.get("status") or "").lower() if isinstance(poll_data, dict) else ""
+                    if text and len(text.strip()) > 120:
+                        break
+                    if status in {"failed", "stopped", "completed"}:
+                        break
+        except Exception:
+            pass
+        return "Hyperbrowser", text, meta
+
+    def _browserless(self, url: str, cfg: RunConfig) -> Tuple[str, str, Dict[str, Any]]:
+        endpoint = (self.api.browserless_endpoint or "https://production-sfo.browserless.io").rstrip("/")
+        payload = {"url": url, "formats": ["html", "markdown"]}
+        res = self._safe_post(f"{endpoint}/smart-scrape", params={"token": self.api.browserless}, headers={"Content-Type": "application/json", "Accept": "application/json"}, json=payload, timeout=max(45, self.api.timeout))
+        text = res.text
+        meta: Dict[str, Any] = {"status": res.status_code}
+        try:
+            data = res.json()
+            meta["json"] = data
+            text = self._payload_text(data) or text
+        except Exception:
+            pass
+        return "Browserless", text, meta
+
+    def _browserbase(self, url: str, cfg: RunConfig) -> Tuple[str, str, Dict[str, Any]]:
+        headers = {"X-BB-API-Key": self.api.browserbase, "Content-Type": "application/json", "Accept": "application/json"}
+        payload: Dict[str, Any] = {
+            "url": url,
+            "allowRedirects": True,
+            "allowInsecureSsl": False,
+            "proxies": False,
+            "format": "markdown",
+        }
+        res = self._safe_post("https://api.browserbase.com/v1/fetch", headers=headers, json=payload, timeout=max(45, self.api.timeout))
+        text = res.text
+        meta: Dict[str, Any] = {"status": res.status_code}
+        try:
+            data = res.json()
+            meta["json"] = data
+            text = self._payload_text(data) or text
+        except Exception:
+            pass
+        return "Browserbase", text, meta
+
     def _jina_reader(self, url: str, cfg: RunConfig) -> Tuple[str, str, Dict[str, Any]]:
         headers = {"Accept": "text/plain"}
         if self.api.jina:
@@ -413,6 +510,88 @@ class ExternalClient:
         except Exception:
             return []
         return self._normalize_openwebninja_results(data)
+
+
+    @classmethod
+    def _normalize_searchapi_results(cls, data: Any) -> List[Dict[str, Any]]:
+        raw_items: List[Any] = []
+        if isinstance(data, dict):
+            for key in ("items", "apps", "results"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    raw_items.extend(value)
+            organic = data.get("organic_results")
+            if isinstance(organic, list):
+                for group in organic:
+                    if isinstance(group, dict) and isinstance(group.get("items"), list):
+                        raw_items.extend(group.get("items") or [])
+                    elif isinstance(group, dict):
+                        raw_items.append(group)
+            highlights = data.get("highlights")
+            if isinstance(highlights, list):
+                raw_items.extend(highlights)
+        elif isinstance(data, list):
+            raw_items = data
+
+        out: List[Dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            product = item.get("product") if isinstance(item.get("product"), dict) else {}
+            url = str(item.get("link") or item.get("url") or product.get("link") or "")
+            app_id = item.get("product_id") or item.get("id") or product.get("product_id") or cls._extract_app_id_from_url(url)
+            if not app_id:
+                continue
+            title = str(item.get("title") or product.get("title") or app_id)
+            author = product.get("author") if isinstance(product.get("author"), dict) else {}
+            normalized = {
+                "appId": app_id,
+                "title": title.replace(" - Apps on Google Play", "").replace(" – Apps no Google Play", ""),
+                "developer": item.get("developer") or item.get("author") or author.get("name"),
+                "summary": item.get("description") or item.get("snippet") or item.get("subtitle"),
+                "score": item.get("rating") or item.get("score"),
+                "genre": item.get("category"),
+                "icon": item.get("thumbnail") or item.get("icon"),
+                "url": url or f"https://play.google.com/store/apps/details?id={app_id}",
+                "_searchapi_raw_preview": json.dumps(item, ensure_ascii=False)[:1500],
+            }
+            out.append({k: v for k, v in normalized.items() if v not in (None, "", [], {})})
+        return out
+
+    def searchapi_play_search(self, query: str, cfg: RunConfig) -> List[Dict[str, Any]]:
+        if not self.api.searchapi:
+            return []
+        params = {
+            "engine": "google_play_store",
+            "store": "apps",
+            "q": query,
+            "hl": cfg.lang,
+            "gl": cfg.country,
+            "api_key": self.api.searchapi,
+        }
+        res = self._safe_get("https://www.searchapi.io/api/v1/search", params=params, timeout=max(45, self.api.timeout))
+        try:
+            data = res.json()
+        except Exception:
+            return []
+        return self._normalize_searchapi_results(data)
+
+    def searchapi_product(self, app_id: str, cfg: RunConfig) -> Dict[str, Any]:
+        if not self.api.searchapi or not app_id:
+            return {}
+        params = {
+            "engine": "google_play_product",
+            "store": "apps",
+            "product_id": app_id,
+            "hl": cfg.lang,
+            "gl": cfg.country,
+            "api_key": self.api.searchapi,
+        }
+        res = self._safe_get("https://www.searchapi.io/api/v1/search", params=params, timeout=max(45, self.api.timeout))
+        try:
+            return res.json()
+        except Exception:
+            return {"_searchapi_error": res.text[:500], "status_code": res.status_code}
 
 
     @classmethod
@@ -680,6 +859,16 @@ def enrich_external(app_data: Dict[str, Any], cfg: RunConfig, client: ExternalCl
     sources: List[str] = []
     app_id = app_data.get("appId") or app_data.get("app_id")
     url = app_link(app_data)
+
+    if client.api.searchapi and app_id:
+        searchapi = client.searchapi_product(str(app_id), cfg)
+        if searchapi:
+            sources.append("SearchAPI")
+            out["searchapi_json_preview"] = json.dumps(searchapi, ensure_ascii=False)[:2000]
+            product = searchapi.get("product") or searchapi.get("product_info") or {}
+            if isinstance(product, dict):
+                out.setdefault("external_title", product.get("title"))
+                out.setdefault("external_description", product.get("description") or product.get("snippet") or product.get("summary"))
 
     if client.api.serpapi and app_id:
         serp = client.serpapi_product(str(app_id), cfg)

@@ -21,6 +21,111 @@
   </div>
 </section>
 
+<section class="queue-strip mb-4">
+  <div><span>na fila</span><b>{{ queue.queued or 0 }}</b></div>
+  <div><span>rodando</span><b>{{ queue.running or 0 }}</b></div>
+  <div><span>proximo job</span><b>{{ ('#' ~ queue.next_run_id) if queue.next_run_id else 'nenhum' }}</b></div>
+  <div><span>workers</span><b>{{ queue.max_workers or 1 }}</b></div>
+</section>
+
+<section class="executive-dashboard mb-4">
+  <div class="executive-grid">
+    <article class="card-soft p-3 executive-panel">
+      <div class="executive-head">
+        <div><div class="eyebrow">decisao</div><h2 class="section-title mb-0">Top oportunidades</h2></div>
+        <a href="{{ url_for('apps_page', order='opportunity_score') }}" class="btn btn-sm btn-light rounded-pill">ver</a>
+      </div>
+      <div class="executive-list">
+        {% for item in executive.top_opportunities %}
+          <a href="{{ url_for('app_detail', app_pk=item.id) }}">
+            {% if item.icon %}<img src="{{ item.icon }}" alt="">{% else %}<span class="app-placeholder mini">?</span>{% endif %}
+            <span><b>{{ item.title }}</b><em>{{ item.category }} | {{ item.score_line }}</em></span>
+            <strong>{{ item.metric_value }}</strong>
+          </a>
+        {% else %}
+          <p class="text-muted small mb-0">Sem apps salvos ainda.</p>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="card-soft p-3 executive-panel">
+      <div class="executive-head">
+        <div><div class="eyebrow">tracao</div><h2 class="section-title mb-0">Top crescimento</h2></div>
+        <a href="{{ url_for('apps_page', order='growth_score') }}" class="btn btn-sm btn-light rounded-pill">ver</a>
+      </div>
+      <div class="executive-list">
+        {% for item in executive.top_growth %}
+          <a href="{{ url_for('app_detail', app_pk=item.id) }}">
+            {% if item.icon %}<img src="{{ item.icon }}" alt="">{% else %}<span class="app-placeholder mini">?</span>{% endif %}
+            <span><b>{{ item.title }}</b><em>{{ item.category }} | {{ item.score_line }}</em></span>
+            <strong>{{ item.metric_value }}</strong>
+          </a>
+        {% else %}
+          <p class="text-muted small mb-0">Sem apps salvos ainda.</p>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="card-soft p-3 executive-panel">
+      <div class="executive-head">
+        <div><div class="eyebrow">monetizacao</div><h2 class="section-title mb-0">Maior receita</h2></div>
+        <a href="{{ url_for('apps_page', order='revenue_monthly_usd_base') }}" class="btn btn-sm btn-light rounded-pill">ver</a>
+      </div>
+      <div class="executive-list">
+        {% for item in executive.top_revenue %}
+          <a href="{{ url_for('app_detail', app_pk=item.id) }}">
+            {% if item.icon %}<img src="{{ item.icon }}" alt="">{% else %}<span class="app-placeholder mini">?</span>{% endif %}
+            <span><b>{{ item.title }}</b><em>{{ item.category }} | {{ item.score_line }}</em></span>
+            <strong>{{ item.metric_value }}</strong>
+          </a>
+        {% else %}
+          <p class="text-muted small mb-0">Sem receita estimada acima de zero ainda.</p>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="card-soft p-3 executive-panel">
+      <div class="executive-head">
+        <div><div class="eyebrow">mercado</div><h2 class="section-title mb-0">Categorias promissoras</h2></div>
+        <a href="{{ url_for('apps_page') }}" class="btn btn-sm btn-light rounded-pill">apps</a>
+      </div>
+      <div class="category-leader-list">
+        {% for item in executive.categories %}
+          <div>
+            <span><b>{{ item.category }}</b><em>{{ item.count }} apps | top: {{ item.top_app }}</em></span>
+            <strong>{{ item.score }}</strong>
+          </div>
+        {% else %}
+          <p class="text-muted small mb-0">Sem categorias suficientes ainda.</p>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="card-soft p-3 executive-panel attention-panel">
+      <div class="executive-head">
+        <div><div class="eyebrow">atencao</div><h2 class="section-title mb-0">Erros e APIs</h2></div>
+        <a href="{{ url_for('settings_page') }}" class="btn btn-sm btn-light rounded-pill">config</a>
+      </div>
+      <div class="attention-stats">
+        <div><b>{{ executive.run_alerts|length }}</b><span>runs com alerta</span></div>
+        <div><b>{{ executive.api_failures|length }}</b><span>APIs falhando</span></div>
+        <div><b>{{ executive.api_summary.untested }}</b><span>APIs sem teste</span></div>
+      </div>
+      <div class="attention-list">
+        {% for r in executive.run_alerts %}
+          <a href="{{ url_for('run_detail', run_id=r.id) }}"><span>Run #{{ r.id }} | {{ r.status }}</span><em>{{ r.last_message or 'sem mensagem' }}</em></a>
+        {% endfor %}
+        {% for card in executive.api_failures %}
+          <a href="{{ url_for('settings_page', api_status='failed') }}"><span>{{ card.provider }} | {{ card.test.status }}</span><em>{{ card.test.message }}</em></a>
+        {% endfor %}
+        {% if not executive.run_alerts and not executive.api_failures %}
+          <p class="text-muted small mb-0">Nenhum alerta critico no momento.</p>
+        {% endif %}
+      </div>
+    </article>
+  </div>
+</section>
+
 {% if active_runs %}
 <div class="card-soft p-4 mb-4 live-history-card">
   <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
@@ -182,8 +287,11 @@
     <div class="card-soft p-4 mb-4">
       <div class="d-flex justify-content-between align-items-center mb-2"><h2 class="section-title mb-0">APIs detectadas</h2><span class="badge rounded-pill text-bg-light">.env</span></div>
       <div class="api-grid">
-        {% for name, ok in api.available().items() %}
-          <div class="api-pill {{ 'on' if ok else '' }}"><span>{{ name }}</span><b>{{ 'ativa' if ok else 'sem key' }}</b></div>
+        {% for card in api_status_cards %}
+          <div class="api-pill {{ 'on' if card.configured else '' }} {{ 'bad' if card.test and not card.test.ok else '' }}">
+            <span>{{ card.provider }}</span>
+            <b>{% if card.test and card.test.ok %}ok{% elif card.test %}falhou{% elif card.configured %}com key{% else %}sem key{% endif %}</b>
+          </div>
         {% endfor %}
       </div>
       <p class="small text-muted mt-3 mb-0">Bright Data precisa de token + zone. OpenWebNinja precisa de key + endpoint específico.</p>
@@ -191,11 +299,20 @@
     <div class="card-soft p-4">
       <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap"><div><div class="eyebrow">memória do radar</div><h2 class="section-title mb-0">Histórico de pesquisas</h2></div><a href="{{ url_for('runs_page') }}" class="btn btn-sm btn-light rounded-pill">Ver todas</a></div>
       <div class="table-responsive mt-3">
-        <table class="table align-middle history-table">
-          <thead><tr><th>ID</th><th>Status</th><th>Nível</th><th>Perfil</th><th>Apps</th><th>Controles</th></tr></thead>
+        <table class="table align-middle history-table" data-sortable-table data-sort-param-prefix="runs">
+          <thead>
+            <tr>
+              <th><button type="button" class="table-sort-button" data-sort-key="id" data-sort-type="number">ID</button></th>
+              <th><button type="button" class="table-sort-button" data-sort-key="status" data-sort-type="status">Status</button></th>
+              <th><button type="button" class="table-sort-button" data-sort-key="level" data-sort-type="text" data-sort-default="asc">Nível</button></th>
+              <th><button type="button" class="table-sort-button" data-sort-key="profile" data-sort-type="text" data-sort-default="asc">Perfil</button></th>
+              <th><button type="button" class="table-sort-button" data-sort-key="apps" data-sort-type="number">Apps</button></th>
+              <th>Controles</th>
+            </tr>
+          </thead>
           <tbody>
           {% for r in runs %}
-            <tr><td>#{{ r.id }}</td><td><span class="status {{ r.status }}">{{ r.status }}</span></td><td>{{ r.level }}</td><td>{{ r.profile }}</td><td>{{ r.apps_kept }}</td><td>{{ run_controls(r, compact=True, show_label=False) }}</td></tr>
+            <tr data-sort-row data-sort-id="{{ r.id or 0 }}" data-sort-status="{{ r.status or '' }}" data-sort-level="{{ r.level or '' }}" data-sort-profile="{{ r.profile or '' }}" data-sort-apps="{{ r.apps_kept or 0 }}"><td>#{{ r.id }}</td><td><span class="status {{ r.status }}">{{ r.status }}</span></td><td>{{ r.level }}</td><td>{{ r.profile }}</td><td>{{ r.apps_kept }}</td><td>{{ run_controls(r, compact=True, show_label=False) }}</td></tr>
           {% else %}<tr><td colspan="6" class="text-muted">Nenhuma busca ainda.</td></tr>{% endfor %}
           </tbody>
         </table>
@@ -213,8 +330,19 @@
     <a href="{{ url_for('apps_page') }}" class="btn btn-sm btn-light rounded-pill"><i class="bi bi-table me-1"></i>Explorar apps</a>
   </div>
   <div class="table-responsive">
-    <table class="table table-hover align-middle apps-table compact-app-table">
-      <thead><tr><th>App</th><th>Categoria</th><th>Nota</th><th>Installs</th><th>Scores</th><th>Receita/mês</th><th>Conf.</th><th></th></tr></thead>
+    <table class="table table-hover align-middle apps-table compact-app-table" data-sortable-table data-sort-param-prefix="apps">
+      <thead>
+        <tr>
+          <th><button type="button" class="table-sort-button" data-sort-key="app" data-sort-type="text" data-sort-default="asc">App</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="category" data-sort-type="text" data-sort-default="asc">Categoria</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="score" data-sort-type="number">Nota</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="installs" data-sort-type="number">Installs</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="scores" data-sort-type="number">Scores</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="revenue" data-sort-type="number">Receita/mês</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="confidence" data-sort-type="text" data-sort-default="asc">Conf.</button></th>
+          <th></th>
+        </tr>
+      </thead>
       <tbody>
         {% for a in apps %}{% include "partials_app_table_row.html" %}{% else %}<tr><td colspan="8" class="text-muted">Rode uma busca para popular o radar.</td></tr>{% endfor %}
       </tbody>

@@ -10,10 +10,21 @@
     </div>
     <div class="d-flex gap-2 flex-wrap">
       <form method="post" action="{{ url_for('test_all_apis_route') }}">
-        <button class="btn btn-primary rounded-pill px-4" type="submit"><i class="bi bi-plug me-1"></i> Testar todas configuradas</button>
+        <button class="btn btn-primary rounded-pill px-4" type="submit"><i class="bi bi-plug me-1"></i> Testar so APIs com chave</button>
       </form>
       <a class="btn btn-light rounded-pill px-4" href="{{ url_for('index') }}">Voltar</a>
     </div>
+  </div>
+</section>
+
+<section class="api-diagnostic-overview card-soft p-3 mb-4">
+  <div class="api-diagnostic-overview-grid">
+    <div><b>{{ diagnostic_summary.configured }}/{{ diagnostic_summary.total }}</b><span>APIs com chave</span></div>
+    <div><b>{{ diagnostic_summary.working }}</b><span>funcionando</span></div>
+    <div><b>{{ diagnostic_summary.failed }}</b><span>falhando</span></div>
+    <div><b>{{ diagnostic_summary.untested }}</b><span>sem teste</span></div>
+    <div><b>{{ diagnostic_summary.avg_latency_ms or 0 }}ms</b><span>latencia media</span></div>
+    <div><b>{{ diagnostic_summary.last_test_at or 'sem teste' }}</b><span>ultimo teste</span></div>
   </div>
 </section>
 
@@ -31,30 +42,53 @@
       <form method="post" action="{{ url_for('save_api_settings_route') }}" class="api-settings-form">
         <div class="accordion settings-accordion" id="apiGroupsAccordion">
           {% for group, group_fields in fields_by_group.items() %}
-          <div class="accordion-item api-group-item">
+          <div class="accordion-item api-group-item" data-api-field-group data-group="{{ group|lower }}">
             <h2 class="accordion-header">
               <button class="accordion-button {{ '' if loop.first else 'collapsed' }}" type="button" data-bs-toggle="collapse" data-bs-target="#group{{ loop.index }}">
                 <span>{{ group }}</span>
-                <em>{{ group_fields|length }} campos</em>
+                <em data-field-group-count>{{ group_fields|length }} campos</em>
               </button>
             </h2>
             <div id="group{{ loop.index }}" class="accordion-collapse collapse {{ 'show' if loop.first else '' }}" data-bs-parent="#apiGroupsAccordion">
               <div class="accordion-body">
                 {% for field in group_fields %}
-                  <div class="api-field-row">
+                  {% set field_card = card_lookup.get(field.provider, {}) %}
+                  <div
+                    class="api-field-row"
+                    data-api-field
+                    data-provider="{{ field.provider|lower }}"
+                    data-label="{{ field.label|lower }}"
+                    data-env="{{ field.env|lower }}"
+                    data-group="{{ group|lower }}"
+                    data-configured="{{ 1 if field.value else 0 }}"
+                    data-provider-configured="{{ 1 if field_card.configured else 0 }}"
+                    data-tested="{{ 1 if field_card.test else 0 }}"
+                    data-working="{{ 1 if field_card.test and field_card.test.ok else 0 }}"
+                    data-failed="{{ 1 if field_card.test and not field_card.test.ok else 0 }}"
+                  >
                     <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
                       <label class="form-label mb-0" for="api_{{ field.attr }}">{{ field.label }}</label>
-                      <span class="source-pill {{ field.source_slug }}">{{ field.source }}</span>
+                      <div class="api-field-tools">
+                        <button class="copy-env-btn" type="button" data-copy-env="{{ field.env }}" title="Copiar nome da variavel">
+                          <i class="bi bi-clipboard"></i>
+                          <span>{{ field.env }}</span>
+                        </button>
+                        <span class="source-pill {{ field.source_slug }}">{{ field.source }}</span>
+                      </div>
                     </div>
                     <input
                       id="api_{{ field.attr }}"
                       name="{{ field.attr }}"
                       class="form-control rounded-4"
                       type="{{ 'password' if field.is_secret else 'text' }}"
-                      value="{{ field.value }}"
-                      placeholder="{{ field.placeholder }}"
+                      value="{{ field.display_value }}"
+                      placeholder="{{ field.display_placeholder }}"
                       autocomplete="off"
+                      data-secret-sentinel="{{ 1 if field.is_masked_secret else 0 }}"
                     >
+                    {% if field.is_masked_secret %}
+                      <div class="form-hint mt-1">Valor oculto por seguranca. Para alterar, substitua o campo; para manter, deixe como esta.</div>
+                    {% endif %}
                     {% if field.is_env %}
                       <div class="form-hint mt-1">Valor vindo do <code>.env</code>. Salvar no painel não apaga nem substitui esse valor.</div>
                     {% endif %}
@@ -75,19 +109,74 @@
   </div>
 
   <div class="col-xxl-7">
-    <div class="api-group-stack">
+    <section class="card-soft p-3 mb-3 api-filter-panel" data-api-filters>
+      <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+        <div>
+          <div class="eyebrow">filtro</div>
+          <h2 class="section-title mb-0">Encontrar APIs</h2>
+        </div>
+        <span class="badge rounded-pill text-bg-light" id="apiVisibleCount">{{ cards|length }}/{{ cards|length }} visÃ­veis</span>
+      </div>
+      <div class="api-filter-grid">
+        <div class="api-filter-search">
+          <i class="bi bi-search"></i>
+          <input id="apiSearchFilter" class="form-control" type="search" placeholder="Nome, chave, grupo..." autocomplete="off">
+        </div>
+        <select id="apiStatusFilter" class="form-select">
+          <option value="all">Todas</option>
+          <option value="working">Funcionando</option>
+          <option value="configured">Com chave</option>
+          <option value="missing">Sem chave</option>
+          <option value="failed">Falharam</option>
+          <option value="untested">Sem teste</option>
+        </select>
+        <select id="apiGroupFilter" class="form-select">
+          <option value="all">Todos os grupos</option>
+          {% for group in api_groups %}
+            <option value="{{ group|lower }}">{{ group }}</option>
+          {% endfor %}
+        </select>
+        <select id="apiSortFilter" class="form-select">
+          <option value="status">Status</option>
+          <option value="name">Nome</option>
+          <option value="configured">Com chave</option>
+          <option value="usage">Uso local</option>
+          <option value="enriched">Apps enriquecidos</option>
+          <option value="latency">Latencia</option>
+          <option value="last_test">Ultimo teste</option>
+          <option value="last_used">Ultima coleta</option>
+        </select>
+        <button class="btn btn-light rounded-pill" id="apiClearFilters" type="button"><i class="bi bi-x-lg me-1"></i> Limpar</button>
+      </div>
+    </section>
+
+    <div class="api-group-stack" id="apiGroupStack">
       {% for group, group_cards in cards_by_group.items() %}
-        <section class="card-soft p-3 api-group-section">
+        <section class="card-soft p-3 api-group-section" data-api-section data-group="{{ group|lower }}">
           <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
             <div>
               <div class="eyebrow">grupo</div>
               <h2 class="section-title mb-0">{{ group }}</h2>
             </div>
-            <span class="badge rounded-pill text-bg-light">{{ group_cards|selectattr('configured')|list|length }}/{{ group_cards|length }} ativos</span>
+            <span class="badge rounded-pill text-bg-light" data-section-count>{{ group_cards|selectattr('configured')|list|length }}/{{ group_cards|length }} ativos</span>
           </div>
           <div class="api-card-grid">
             {% for card in group_cards %}
-              <article class="api-status-card {{ 'configured' if card.configured else '' }}">
+              <article
+                class="api-status-card {{ 'configured' if card.configured else '' }}"
+                data-api-card
+                data-provider="{{ card.provider|lower }}"
+                data-group="{{ group|lower }}"
+                data-configured="{{ 1 if card.configured else 0 }}"
+                data-tested="{{ 1 if card.test else 0 }}"
+                data-working="{{ 1 if card.test and card.test.ok else 0 }}"
+                data-failed="{{ 1 if card.test and not card.test.ok else 0 }}"
+                data-usage="{{ card.usage.call_estimate or 0 }}"
+                data-enriched="{{ card.usage.apps_enriched or 0 }}"
+                data-latency="{{ card.test.latency_ms or 0 }}"
+                data-last-test="{{ card.test.created_at or '' }}"
+                data-last-used="{{ card.usage.last_used_at or '' }}"
+              >
                 <div class="api-card-top">
                   <div>
                     <h3>{{ card.provider }}</h3>
@@ -100,12 +189,25 @@
                   <div><b>{{ card.usage.apps_enriched or 0 }}</b><span>apps enriquecidos</span></div>
                   <div><b>{{ card.usage.share_pct or 0 }}%</b><span>do banco</span></div>
                 </div>
+                <div class="api-diagnostic-grid">
+                  <div><span>ultimo teste</span><b>{{ card.test.created_at if card.test else 'sem teste' }}</b></div>
+                  <div><span>latencia</span><b>{{ (card.test.latency_ms ~ 'ms') if card.test else 'sem teste' }}</b></div>
+                  <div><span>ultima coleta</span><b>{{ card.usage.last_used_at or 'nunca' }}</b></div>
+                  <div><span>creditos/saldo</span><b>{{ card.test.balance_label if card.test else 'nao informado' }}</b></div>
+                </div>
                 <div class="api-test-line">
                   {% if card.test %}
                     <span class="test-badge {{ 'ok' if card.test.ok else 'bad' }}">{{ 'OK' if card.test.ok else 'falhou' }}</span>
                     <span>{{ card.test.status }} · {{ card.test.latency_ms or 0 }}ms</span>
                     <small>{{ card.test.created_at }}</small>
                     <em>{{ card.test.message }}</em>
+                    {% if card.test.diagnostics %}
+                      <div class="api-diagnostic-tags">
+                        {% for item in card.test.diagnostics %}
+                          <span><b>{{ item.label }}</b>{{ item.value }}</span>
+                        {% endfor %}
+                      </div>
+                    {% endif %}
                   {% else %}
                     <span class="test-badge idle">sem teste</span>
                     <span>Nenhum teste registrado ainda.</span>
@@ -122,6 +224,196 @@
         </section>
       {% endfor %}
     </div>
+    <div class="card-soft p-4 api-empty-state d-none" id="apiEmptyState">
+      <i class="bi bi-filter-circle"></i>
+      <strong>Nenhuma API encontrada</strong>
+      <span>Ajuste o filtro ou limpe a busca.</span>
+    </div>
   </div>
 </div>
+
+<script>
+(() => {
+  const searchInput = document.querySelector('#apiSearchFilter');
+  const statusFilter = document.querySelector('#apiStatusFilter');
+  const groupFilter = document.querySelector('#apiGroupFilter');
+  const sortFilter = document.querySelector('#apiSortFilter');
+  const clearButton = document.querySelector('#apiClearFilters');
+  const visibleCount = document.querySelector('#apiVisibleCount');
+  const emptyState = document.querySelector('#apiEmptyState');
+  const cards = Array.from(document.querySelectorAll('[data-api-card]'));
+  const sections = Array.from(document.querySelectorAll('[data-api-section]'));
+  const fields = Array.from(document.querySelectorAll('[data-api-field]'));
+  const fieldGroups = Array.from(document.querySelectorAll('[data-api-field-group]'));
+  const copyButtons = Array.from(document.querySelectorAll('[data-copy-env]'));
+
+  const copyText = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    textarea.remove();
+  };
+
+  copyButtons.forEach((button) => {
+    button.addEventListener('click', async () => {
+      const label = button.querySelector('span');
+      const original = label?.textContent || '';
+      await copyText(button.dataset.copyEnv || '');
+      button.classList.add('copied');
+      if (label) label.textContent = 'Copiado';
+      window.setTimeout(() => {
+        button.classList.remove('copied');
+        if (label) label.textContent = original;
+      }, 1200);
+    });
+  });
+
+  if (!searchInput || !statusFilter || !groupFilter || !sortFilter || !cards.length) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const setSelectFromUrl = (select, value, fallback) => {
+    const exists = Array.from(select.options).some((option) => option.value === value);
+    select.value = exists ? value : fallback;
+  };
+  searchInput.value = params.get('api_q') || '';
+  setSelectFromUrl(statusFilter, params.get('api_status') || 'all', 'all');
+  setSelectFromUrl(groupFilter, params.get('api_group') || 'all', 'all');
+  setSelectFromUrl(sortFilter, params.get('api_sort') || 'status', 'status');
+
+  const normalize = (value) => (value || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const numberValue = (node, name) => Number(node.dataset[name] || 0);
+  const dateValue = (node, name) => Date.parse((node.dataset[name] || '').replace(' ', 'T')) || 0;
+  const textMatches = (node, term) => {
+    if (!term) return true;
+    const haystack = normalize([
+      node.dataset.provider,
+      node.dataset.group,
+      node.dataset.label,
+      node.dataset.env,
+      node.textContent,
+    ].join(' '));
+    return haystack.includes(term);
+  };
+  const statusMatches = (node, status, useProviderConfigured = true) => {
+    if (status === 'all') return true;
+    if (status === 'working') return node.dataset.working === '1';
+    if (status === 'configured') return (useProviderConfigured ? node.dataset.providerConfigured : node.dataset.configured) === '1';
+    if (status === 'missing') return (useProviderConfigured ? node.dataset.providerConfigured : node.dataset.configured) !== '1';
+    if (status === 'failed') return node.dataset.failed === '1';
+    if (status === 'untested') return node.dataset.tested !== '1';
+    return true;
+  };
+
+  const sortCards = () => {
+    const sortMode = sortFilter.value;
+    sections.forEach((section) => {
+      const grid = section.querySelector('.api-card-grid');
+      if (!grid) return;
+      Array.from(grid.querySelectorAll('[data-api-card]'))
+        .sort((a, b) => {
+          if (sortMode === 'name') return (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+          if (sortMode === 'configured') return numberValue(b, 'configured') - numberValue(a, 'configured') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+          if (sortMode === 'usage') return numberValue(b, 'usage') - numberValue(a, 'usage') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+          if (sortMode === 'enriched') return numberValue(b, 'enriched') - numberValue(a, 'enriched') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+          if (sortMode === 'latency') return numberValue(a, 'latency') - numberValue(b, 'latency') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+          if (sortMode === 'last_test') return dateValue(b, 'lastTest') - dateValue(a, 'lastTest') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+          if (sortMode === 'last_used') return dateValue(b, 'lastUsed') - dateValue(a, 'lastUsed') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+          return numberValue(b, 'working') - numberValue(a, 'working')
+            || numberValue(b, 'configured') - numberValue(a, 'configured')
+            || numberValue(a, 'failed') - numberValue(b, 'failed')
+            || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+        })
+        .forEach((card) => grid.appendChild(card));
+    });
+  };
+
+  const applyFilters = () => {
+    const term = normalize(searchInput.value);
+    const selectedStatus = statusFilter.value;
+    const selectedGroup = groupFilter.value;
+    let visibleCards = 0;
+
+    sortCards();
+
+    cards.forEach((card) => {
+      const matches = textMatches(card, term)
+        && (selectedGroup === 'all' || card.dataset.group === selectedGroup)
+        && statusMatches(card, selectedStatus, false);
+      card.classList.toggle('d-none', !matches);
+      if (matches) visibleCards += 1;
+    });
+
+    sections.forEach((section) => {
+      const sectionCards = Array.from(section.querySelectorAll('[data-api-card]'));
+      const visibleInSection = sectionCards.filter((card) => !card.classList.contains('d-none')).length;
+      const configuredInSection = sectionCards.filter((card) => !card.classList.contains('d-none') && card.dataset.configured === '1').length;
+      section.classList.toggle('d-none', visibleInSection === 0);
+      const badge = section.querySelector('[data-section-count]');
+      if (badge) badge.textContent = `${configuredInSection}/${visibleInSection} ativos`;
+    });
+
+    fields.forEach((field) => {
+      const matches = textMatches(field, term)
+        && (selectedGroup === 'all' || field.dataset.group === selectedGroup)
+        && statusMatches(field, selectedStatus, true);
+      field.classList.toggle('d-none', !matches);
+    });
+
+    fieldGroups.forEach((group) => {
+      const visibleFields = Array.from(group.querySelectorAll('[data-api-field]')).filter((field) => !field.classList.contains('d-none')).length;
+      group.classList.toggle('d-none', visibleFields === 0);
+      const count = group.querySelector('[data-field-group-count]');
+      if (count) count.textContent = `${visibleFields} campos`;
+    });
+
+    if (visibleCount) visibleCount.textContent = `${visibleCards}/${cards.length} visíveis`;
+    if (emptyState) emptyState.classList.toggle('d-none', visibleCards !== 0);
+  };
+
+  const syncFilterUrl = () => {
+    const nextParams = new URLSearchParams(window.location.search);
+    const values = {
+      api_q: searchInput.value.trim(),
+      api_status: statusFilter.value,
+      api_group: groupFilter.value,
+      api_sort: sortFilter.value,
+    };
+    Object.entries(values).forEach(([key, value]) => {
+      const isDefault = (key === 'api_q' && !value)
+        || (key === 'api_status' && value === 'all')
+        || (key === 'api_group' && value === 'all')
+        || (key === 'api_sort' && value === 'status');
+      if (isDefault) nextParams.delete(key);
+      else nextParams.set(key, value);
+    });
+    const query = nextParams.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  };
+
+  [searchInput, statusFilter, groupFilter, sortFilter].forEach((control) => {
+    control.addEventListener('input', () => { applyFilters(); syncFilterUrl(); });
+    control.addEventListener('change', () => { applyFilters(); syncFilterUrl(); });
+  });
+  clearButton?.addEventListener('click', () => {
+    searchInput.value = '';
+    statusFilter.value = 'all';
+    groupFilter.value = 'all';
+    sortFilter.value = 'status';
+    applyFilters();
+    syncFilterUrl();
+    searchInput.focus();
+  });
+
+  applyFilters();
+})();
+</script>
 {% endblock %}

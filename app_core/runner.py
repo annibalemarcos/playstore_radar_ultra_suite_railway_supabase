@@ -211,6 +211,7 @@ def run_scraper(
 
             if cfg.use_external_apis:
                 discovery_calls = [
+                    ("SearchAPI", api.searchapi, external_client.searchapi_play_search),
                     ("Scavio", api.scavio, external_client.scavio_play_search),
                     ("Exa", api.exa, external_client.exa_play_search),
                     ("Tavily", api.tavily, external_client.tavily_play_search),

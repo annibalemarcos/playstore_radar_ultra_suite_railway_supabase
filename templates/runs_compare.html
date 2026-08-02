@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Comparador de runs · PlayStore Radar Ultra{% endblock %}
+{% macro app_rows(items, empty_text) %}
+  {% for app in items %}
+    <tr
+      data-sort-row
+      data-sort-id="{{ app.id or 0 }}"
+      data-sort-app="{{ app.title }}"
+      data-sort-category="{{ app.category }}"
+      data-sort-score="{{ app.score_total or 0 }}"
+      data-sort-score-delta="{{ app.score_delta or 0 }}"
+      data-sort-revenue="{{ app.revenue_raw or 0 }}"
+      data-sort-revenue-delta="{{ app.revenue_delta_raw or 0 }}"
+      data-sort-opportunity="{{ app.opportunity or 0 }}"
+      data-sort-growth="{{ app.growth or 0 }}"
+    >
+      <td>
+        <div class="compare-app-cell">
+          {% if app.icon %}<img src="{{ app.icon }}" alt="">{% else %}<span class="app-placeholder mini">?</span>{% endif %}
+          <span>
+            <b>{{ app.title }}</b>
+            <em>{{ app.developer or 'Dev nao informado' }}</em>
+          </span>
+        </div>
+      </td>
+      <td>{{ app.category }}</td>
+      <td><b>{{ app.score_total }}</b><span class="text-muted small d-block">opp {{ app.opportunity }} · grow {{ app.growth }} · indie {{ app.indie }}</span></td>
+      <td><span class="delta {{ 'up' if app.score_delta > 0 else 'down' if app.score_delta < 0 else '' }}">{{ app.score_delta }}</span></td>
+      <td>{{ app.revenue }}</td>
+      <td><span class="delta {{ 'up' if app.revenue_delta_raw > 0 else 'down' if app.revenue_delta_raw < 0 else '' }}">{{ app.revenue_delta }}</span></td>
+      <td>{{ app.installs }}</td>
+      <td>{% if app.id %}<a class="btn btn-sm btn-outline-primary rounded-pill" href="{{ url_for('app_detail', app_pk=app.id) }}">abrir</a>{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="text-muted">{{ empty_text }}</td></tr>
+  {% endfor %}
+{% endmacro %}
+{% block content %}
+<section class="compare-hero card-soft p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+    <div>
+      <div class="eyebrow">comparador</div>
+      <h1 class="page-title mb-2">Comparar runs</h1>
+      <p class="text-muted mb-0">Escolha uma busca base e uma busca alvo para ver apps novos, repetidos, quedas, ganhos e categorias que mudaram.</p>
+    </div>
+    <a class="btn btn-light rounded-pill" href="{{ url_for('runs_page') }}"><i class="bi bi-clock-history me-1"></i>Histórico</a>
+  </div>
+
+  <form class="compare-select-form mt-4" method="get" action="{{ url_for('runs_compare_page') }}">
+    <div>
+      <label class="form-label">Run base</label>
+      <select class="form-select rounded-4" name="base_id">
+        {% for run in runs %}
+          <option value="{{ run.id }}" {{ 'selected' if run.id == base_id else '' }}>#{{ run.id }} · {{ run.created_at }} · {{ run.status }} · {{ run.apps_kept or 0 }} apps</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="form-label">Run alvo</label>
+      <select class="form-select rounded-4" name="target_id">
+        {% for run in runs %}
+          <option value="{{ run.id }}" {{ 'selected' if run.id == target_id else '' }}>#{{ run.id }} · {{ run.created_at }} · {{ run.status }} · {{ run.apps_kept or 0 }} apps</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-primary rounded-pill px-4" type="submit"><i class="bi bi-columns-gap me-1"></i>Comparar</button>
+  </form>
+</section>
+
+{% if comparison %}
+  <section class="compare-summary-grid mb-4">
+    <div class="card-soft p-3"><span>base</span><b>Run #{{ comparison.base_run.id }}</b><em>{{ comparison.base_count }} apps · {{ comparison.base_revenue }}</em></div>
+    <div class="card-soft p-3"><span>alvo</span><b>Run #{{ comparison.target_run.id }}</b><em>{{ comparison.target_count }} apps · {{ comparison.target_revenue }}</em></div>
+    <div class="card-soft p-3"><span>novos</span><b>{{ comparison.new_count }}</b><em>{{ comparison.common_count }} repetidos</em></div>
+    <div class="card-soft p-3"><span>removidos</span><b>{{ comparison.removed_count }}</b><em>não apareceram na alvo</em></div>
+    <div class="card-soft p-3"><span>receita</span><b class="{{ 'text-success' if comparison.revenue_delta_raw > 0 else 'text-danger' if comparison.revenue_delta_raw < 0 else '' }}">{{ comparison.revenue_delta }}</b><em>{{ comparison.base_revenue }} → {{ comparison.target_revenue }}</em></div>
+    <div class="card-soft p-3"><span>scores médios</span><b class="{{ 'text-success' if comparison.score_delta > 0 else 'text-danger' if comparison.score_delta < 0 else '' }}">{{ comparison.score_delta }}</b><em>{{ comparison.base_score }} → {{ comparison.target_score }}</em></div>
+  </section>
+
+  <section class="card-soft p-3 mb-4 compare-section">
+    <div class="compare-section-head">
+      <div><div class="eyebrow">apps</div><h2 class="section-title mb-0">Novos na run alvo</h2></div>
+      <span class="badge rounded-pill text-bg-light">{{ comparison.new_count }} apps</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table align-middle compare-table" data-sortable-table data-sort-param-prefix="new">
+        <thead><tr>
+          <th><button type="button" class="table-sort-button" data-sort-key="app" data-sort-type="text" data-sort-default="asc">App</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="category" data-sort-type="text" data-sort-default="asc">Categoria</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="score" data-sort-type="number">Scores</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="score-delta" data-sort-type="number">Δ score</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="revenue" data-sort-type="number">Receita</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="revenue-delta" data-sort-type="number">Δ receita</button></th>
+          <th>Installs</th><th></th>
+        </tr></thead>
+        <tbody>{{ app_rows(comparison.new_apps, 'Nenhum app novo entre essas runs.') }}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="row g-4 mb-4">
+    <div class="col-xl-6">
+      <div class="card-soft p-3 compare-section h-100">
+        <div class="compare-section-head"><div><div class="eyebrow">repetidos</div><h2 class="section-title mb-0">Melhoraram</h2></div></div>
+        <div class="table-responsive">
+          <table class="table align-middle compare-table" data-sortable-table data-sort-param-prefix="improved">
+            <thead><tr><th>App</th><th>Categoria</th><th>Scores</th><th><button type="button" class="table-sort-button" data-sort-key="score-delta" data-sort-type="number">Δ score</button></th><th>Receita</th><th><button type="button" class="table-sort-button" data-sort-key="revenue-delta" data-sort-type="number">Δ receita</button></th><th>Installs</th><th></th></tr></thead>
+            <tbody>{{ app_rows(comparison.improved_apps, 'Nenhum app repetido melhorou pelos critérios atuais.') }}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-6">
+      <div class="card-soft p-3 compare-section h-100">
+        <div class="compare-section-head"><div><div class="eyebrow">repetidos</div><h2 class="section-title mb-0">Caíram</h2></div></div>
+        <div class="table-responsive">
+          <table class="table align-middle compare-table" data-sortable-table data-sort-param-prefix="declined">
+            <thead><tr><th>App</th><th>Categoria</th><th>Scores</th><th><button type="button" class="table-sort-button" data-sort-key="score-delta" data-sort-type="number">Δ score</button></th><th>Receita</th><th><button type="button" class="table-sort-button" data-sort-key="revenue-delta" data-sort-type="number">Δ receita</button></th><th>Installs</th><th></th></tr></thead>
+            <tbody>{{ app_rows(comparison.declined_apps, 'Nenhum app repetido caiu pelos critérios atuais.') }}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card-soft p-3 mb-4 compare-section">
+    <div class="compare-section-head"><div><div class="eyebrow">categorias</div><h2 class="section-title mb-0">Categorias que mudaram</h2></div></div>
+    <div class="table-responsive">
+      <table class="table align-middle compare-table" data-sortable-table data-sort-param-prefix="cats">
+        <thead><tr>
+          <th><button type="button" class="table-sort-button" data-sort-key="category" data-sort-type="text" data-sort-default="asc">Categoria</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="base-count" data-sort-type="number">Apps base</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="target-count" data-sort-type="number">Apps alvo</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="count-delta" data-sort-type="number">Δ apps</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="score-delta" data-sort-type="number">Δ score médio</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="revenue-delta" data-sort-type="number">Δ receita</button></th>
+        </tr></thead>
+        <tbody>
+          {% for row in comparison.categories %}
+            <tr data-sort-row data-sort-category="{{ row.category }}" data-sort-base-count="{{ row.base_count }}" data-sort-target-count="{{ row.target_count }}" data-sort-count-delta="{{ row.count_delta }}" data-sort-score-delta="{{ row.score_delta }}" data-sort-revenue-delta="{{ row.revenue_delta_raw }}">
+              <td><b>{{ row.category }}</b></td>
+              <td>{{ row.base_count }}<span class="text-muted small d-block">{{ row.base_avg }} avg</span></td>
+              <td>{{ row.target_count }}<span class="text-muted small d-block">{{ row.target_avg }} avg</span></td>
+              <td><span class="delta {{ 'up' if row.count_delta > 0 else 'down' if row.count_delta < 0 else '' }}">{{ row.count_delta }}</span></td>
+              <td><span class="delta {{ 'up' if row.score_delta > 0 else 'down' if row.score_delta < 0 else '' }}">{{ row.score_delta }}</span></td>
+              <td><span class="delta {{ 'up' if row.revenue_delta_raw > 0 else 'down' if row.revenue_delta_raw < 0 else '' }}">{{ row.revenue_delta }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="text-muted">Sem categorias para comparar.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card-soft p-3 compare-section">
+    <div class="compare-section-head"><div><div class="eyebrow">apps</div><h2 class="section-title mb-0">Removidos da run alvo</h2></div><span class="badge rounded-pill text-bg-light">{{ comparison.removed_count }} apps</span></div>
+    <div class="table-responsive">
+      <table class="table align-middle compare-table" data-sortable-table data-sort-param-prefix="removed">
+        <thead><tr><th>App</th><th>Categoria</th><th>Scores</th><th>Δ score</th><th>Receita</th><th>Δ receita</th><th>Installs</th><th></th></tr></thead>
+        <tbody>{{ app_rows(comparison.removed_apps, 'Nenhum app removido entre essas runs.') }}</tbody>
+      </table>
+    </div>
+  </section>
+{% else %}
+  <section class="card-soft p-4 compare-empty">
+    <i class="bi bi-columns-gap"></i>
+    <strong>Escolha duas runs diferentes</strong>
+    <span>O comparador precisa de pelo menos duas buscas salvas.</span>
+  </section>
+{% endif %}
+{% endblock %}

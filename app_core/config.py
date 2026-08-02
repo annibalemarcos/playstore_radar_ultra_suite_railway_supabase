@@ -58,16 +58,19 @@ def output_target() -> str:
 
 
 API_SETTINGS_PATH = DATA_DIR / "api_settings.json"
+SECRET_KEEP_SENTINEL = "__KEEP_SECRET__"
 
 API_PROVIDER_GROUPS: Dict[str, list[str]] = {
     "Scraping / Render": [
-        "ScraperAPI", "ScrapingBee", "Scrape.do", "Bright Data", "Apify", "Firecrawl", "ScrapingAnt",
-        "Crawlbase", "Decodo", "Scrapfly", "WebScraping.AI", "ZenRows", "AlterLab", "Jina AI",
+        "ScraperAPI", "ScrapingBee", "Scrape.do", "Bright Data", "Apify", "Firecrawl", "Hyperbrowser",
+        "Browserless", "Browserbase", "ScrapingAnt", "Crawlbase", "Decodo", "Scrapfly",
+        "WebScraping.AI", "ZenRows", "AlterLab", "Jina AI",
     ],
-    "Search / Discovery": ["SerpAPI", "Brave Search", "OpenWebNinja", "Scavio", "Exa", "Tavily", "You.com", "Jina AI", "WolframAlpha"],
+    "Search / Discovery": ["SerpAPI", "SearchAPI", "Brave Search", "OpenWebNinja", "Scavio", "Exa", "Tavily", "You.com", "Jina AI", "WolframAlpha"],
     "LLM / Insights": ["DeepSeek", "OpenRouter", "Groq", "Mistral", "Gemini", "Fireworks", "Cohere", "NLPCloud"],
     "Embeddings / Vision": ["Jina AI", "Voyage AI", "Replicate", "Roboflow"],
     "Automation / Recipes": ["SimpleScraper", "Browse AI", "AbstractAPI", "Ollama"],
+    "Storage / Infra": ["Cloudflare API Token", "Cloudflare R2"],
 }
 
 API_FIELDS = [
@@ -80,6 +83,11 @@ API_FIELDS = [
     {"group": "Scraping / Render", "provider": "Apify", "attr": "apify", "env": "APIFY_TOKEN", "label": "Apify Token", "placeholder": "apify_api_..."},
     {"group": "Scraping / Render", "provider": "Apify", "attr": "apify_actor_id", "env": "APIFY_ACTOR_ID", "label": "Apify Actor ID", "placeholder": "oneary/google-play-store-scraper", "secret": False},
     {"group": "Scraping / Render", "provider": "Firecrawl", "attr": "firecrawl", "env": "FIRECRAWL_KEY", "label": "Firecrawl", "placeholder": "fc-..."},
+    {"group": "Scraping / Render", "provider": "Hyperbrowser", "attr": "hyperbrowser", "env": "HYPERBROWSER_API_KEY", "label": "Hyperbrowser API Key", "placeholder": "hb_..."},
+    {"group": "Scraping / Render", "provider": "Browserless", "attr": "browserless", "env": "BROWSERLESS_TOKEN", "label": "Browserless Token", "placeholder": "token"},
+    {"group": "Scraping / Render", "provider": "Browserless", "attr": "browserless_endpoint", "env": "BROWSERLESS_ENDPOINT", "label": "Browserless Endpoint", "placeholder": "https://production-sfo.browserless.io", "secret": False},
+    {"group": "Scraping / Render", "provider": "Browserbase", "attr": "browserbase", "env": "BROWSERBASE_API_KEY", "label": "Browserbase API Key", "placeholder": "bb_live_..."},
+    {"group": "Scraping / Render", "provider": "Browserbase", "attr": "browserbase_project_id", "env": "BROWSERBASE_PROJECT_ID", "label": "Browserbase Project ID", "placeholder": "opcional", "secret": False},
     {"group": "Scraping / Render", "provider": "ScrapingAnt", "attr": "scrapingant", "env": "SCRAPINGANT_KEY", "label": "ScrapingAnt", "placeholder": "api_key"},
     {"group": "Scraping / Render", "provider": "Crawlbase", "attr": "crawlbase", "env": "CRAWLBASE_KEY", "label": "Crawlbase", "placeholder": "token"},
     {"group": "Scraping / Render", "provider": "Decodo", "attr": "decodo", "env": "DECODO_TOKEN", "label": "Decodo Web Scraping API", "placeholder": "Basic token/base64"},
@@ -91,6 +99,7 @@ API_FIELDS = [
 
     # Search / discovery
     {"group": "Search / Discovery", "provider": "SerpAPI", "attr": "serpapi", "env": "SERPAPI_KEY", "label": "SerpAPI", "placeholder": "api_key"},
+    {"group": "Search / Discovery", "provider": "SearchAPI", "attr": "searchapi", "env": "SEARCHAPI_KEY", "label": "SearchAPI.io", "placeholder": "api_key"},
     {"group": "Search / Discovery", "provider": "Brave Search", "attr": "brave_search", "env": "BRAVE_SEARCH_KEY", "label": "Brave Search API", "placeholder": "BSAP..."},
     {"group": "Search / Discovery", "provider": "OpenWebNinja", "attr": "openwebninja", "env": "OPENWEBNINJA_KEY", "label": "OpenWebNinja Key", "placeholder": "ak_..."},
     {"group": "Search / Discovery", "provider": "OpenWebNinja", "attr": "openwebninja_endpoint", "env": "OPENWEBNINJA_ENDPOINT", "label": "OpenWebNinja Endpoint", "placeholder": "https://api.openwebninja.com/play-store-apps/search", "secret": False},
@@ -119,6 +128,14 @@ API_FIELDS = [
     {"group": "Automation / Recipes", "provider": "Browse AI", "attr": "browseai", "env": "BROWSEAI_KEY", "label": "Browse AI", "placeholder": "token ou workspace:token"},
     {"group": "Automation / Recipes", "provider": "AbstractAPI", "attr": "abstractapi", "env": "ABSTRACTAPI_KEY", "label": "AbstractAPI", "placeholder": "api_key"},
     {"group": "Automation / Recipes", "provider": "Ollama", "attr": "ollama", "env": "OLLAMA_API_KEY", "label": "Ollama API Key", "placeholder": "opcional/local/remoto"},
+
+    # Storage / infra
+    {"group": "Storage / Infra", "provider": "Cloudflare API Token", "attr": "cloudflare_token_name", "env": "CLOUDFLARE_TOKEN_NAME", "label": "Cloudflare Token Name", "placeholder": "fancy-tooth-7e81", "secret": False},
+    {"group": "Storage / Infra", "provider": "Cloudflare API Token", "attr": "cloudflare_account_id", "env": "CLOUDFLARE_ACCOUNT_ID", "label": "Cloudflare Account ID", "placeholder": "account_id", "secret": False},
+    {"group": "Storage / Infra", "provider": "Cloudflare API Token", "attr": "cloudflare_api_token", "env": "CLOUDFLARE_API_TOKEN", "label": "Cloudflare API Token", "placeholder": "cfat_..."},
+    {"group": "Storage / Infra", "provider": "Cloudflare R2", "attr": "cloudflare_r2_access_key_id", "env": "CLOUDFLARE_R2_ACCESS_KEY_ID", "label": "R2 Access Key ID", "placeholder": "access_key_id"},
+    {"group": "Storage / Infra", "provider": "Cloudflare R2", "attr": "cloudflare_r2_secret_access_key", "env": "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "label": "R2 Secret Access Key", "placeholder": "secret_access_key"},
+    {"group": "Storage / Infra", "provider": "Cloudflare R2", "attr": "cloudflare_r2_endpoint", "env": "CLOUDFLARE_R2_ENDPOINT", "label": "R2 S3 Endpoint", "placeholder": "https://<account>.r2.cloudflarestorage.com", "secret": False},
 ]
 
 
@@ -140,6 +157,8 @@ def save_api_settings(values: Dict[str, Any]) -> None:
         if key not in valid_attrs:
             continue
         text_value = str(value or "").strip()
+        if text_value == SECRET_KEEP_SENTINEL:
+            continue
         if text_value:
             current[key] = text_value
         else:
@@ -182,8 +201,14 @@ class ApiConfig:
     apify: str = field(default_factory=lambda: setting("apify", "APIFY_TOKEN"))
     apify_actor_id: str = field(default_factory=lambda: setting("apify_actor_id", "APIFY_ACTOR_ID", "oneary/google-play-store-scraper"))
     firecrawl: str = field(default_factory=lambda: setting("firecrawl", "FIRECRAWL_KEY"))
+    hyperbrowser: str = field(default_factory=lambda: setting("hyperbrowser", "HYPERBROWSER_API_KEY"))
+    browserless: str = field(default_factory=lambda: setting("browserless", "BROWSERLESS_TOKEN"))
+    browserless_endpoint: str = field(default_factory=lambda: setting("browserless_endpoint", "BROWSERLESS_ENDPOINT", "https://production-sfo.browserless.io"))
+    browserbase: str = field(default_factory=lambda: setting("browserbase", "BROWSERBASE_API_KEY"))
+    browserbase_project_id: str = field(default_factory=lambda: setting("browserbase_project_id", "BROWSERBASE_PROJECT_ID"))
     scrapingant: str = field(default_factory=lambda: setting("scrapingant", "SCRAPINGANT_KEY"))
     serpapi: str = field(default_factory=lambda: setting("serpapi", "SERPAPI_KEY"))
+    searchapi: str = field(default_factory=lambda: setting("searchapi", "SEARCHAPI_KEY"))
     crawlbase: str = field(default_factory=lambda: setting("crawlbase", "CRAWLBASE_KEY"))
     decodo: str = field(default_factory=lambda: setting("decodo", "DECODO_TOKEN"))
     brave_search: str = field(default_factory=lambda: setting("brave_search", "BRAVE_SEARCH_KEY"))
@@ -217,6 +242,12 @@ class ApiConfig:
     browseai: str = field(default_factory=lambda: setting("browseai", "BROWSEAI_KEY"))
     abstractapi: str = field(default_factory=lambda: setting("abstractapi", "ABSTRACTAPI_KEY"))
     ollama: str = field(default_factory=lambda: setting("ollama", "OLLAMA_API_KEY"))
+    cloudflare_token_name: str = field(default_factory=lambda: setting("cloudflare_token_name", "CLOUDFLARE_TOKEN_NAME"))
+    cloudflare_account_id: str = field(default_factory=lambda: setting("cloudflare_account_id", "CLOUDFLARE_ACCOUNT_ID"))
+    cloudflare_api_token: str = field(default_factory=lambda: setting("cloudflare_api_token", "CLOUDFLARE_API_TOKEN"))
+    cloudflare_r2_access_key_id: str = field(default_factory=lambda: setting("cloudflare_r2_access_key_id", "CLOUDFLARE_R2_ACCESS_KEY_ID"))
+    cloudflare_r2_secret_access_key: str = field(default_factory=lambda: setting("cloudflare_r2_secret_access_key", "CLOUDFLARE_R2_SECRET_ACCESS_KEY"))
+    cloudflare_r2_endpoint: str = field(default_factory=lambda: setting("cloudflare_r2_endpoint", "CLOUDFLARE_R2_ENDPOINT"))
 
     timeout: int = 35
 
@@ -228,8 +259,12 @@ class ApiConfig:
             "Bright Data": bool(self.brightdata and self.brightdata_zone),
             "Apify": bool(self.apify),
             "Firecrawl": bool(self.firecrawl),
+            "Hyperbrowser": bool(self.hyperbrowser),
+            "Browserless": bool(self.browserless and self.browserless_endpoint),
+            "Browserbase": bool(self.browserbase),
             "ScrapingAnt": bool(self.scrapingant),
             "SerpAPI": bool(self.serpapi),
+            "SearchAPI": bool(self.searchapi),
             "Crawlbase": bool(self.crawlbase),
             "Decodo": bool(self.decodo),
             "Brave Search": bool(self.brave_search),
@@ -259,13 +294,15 @@ class ApiConfig:
             "Browse AI": bool(self.browseai),
             "AbstractAPI": bool(self.abstractapi),
             "Ollama": bool(self.ollama),
+            "Cloudflare API Token": bool(self.cloudflare_api_token),
+            "Cloudflare R2": bool(self.cloudflare_r2_access_key_id and self.cloudflare_r2_secret_access_key and self.cloudflare_r2_endpoint),
         }
 
     def enabled_names(self) -> list[str]:
         return [name for name, ok in self.available().items() if ok]
 
     def has_search_discovery(self) -> bool:
-        return bool(self.brave_search or self.openwebninja or self.exa or self.tavily or self.youcom or self.scavio or self.jina)
+        return bool(self.searchapi or self.brave_search or self.openwebninja or self.exa or self.tavily or self.youcom or self.scavio or self.jina)
 
     def has_ai_insights(self) -> bool:
         return bool(self.deepseek or self.openrouter or self.groq or self.mistral or self.gemini or self.fireworks or self.cohere or self.nlpcloud)

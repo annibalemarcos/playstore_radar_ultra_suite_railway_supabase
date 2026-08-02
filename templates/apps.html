@@ -163,23 +163,36 @@
     </div>
   </div>
   <div class="table-responsive">
-    <table class="table table-hover align-middle apps-table">
+    <table class="table table-hover align-middle apps-table" id="exploreAppsTable" data-sortable-table>
       <thead>
         <tr>
-          <th>App</th>
-          <th>Pesquisa <span class="th-sort"><a class="{% if order=='created_at' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='created_at') }}" title="Mais novas primeiro">↓</a><a class="{% if order=='created_at_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='created_at_asc') }}" title="Mais antigas primeiro">↑</a></span></th>
-          <th>Categoria</th>
-          <th>Nota <span class="th-sort"><a class="{% if order=='score' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='score') }}" title="Maior nota primeiro">↓</a><a class="{% if order=='score_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='score_asc') }}" title="Menor nota primeiro">↑</a></span></th>
-          <th>Installs <span class="th-sort"><a class="{% if order=='real_installs' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='real_installs') }}" title="Mais instalações primeiro">↓</a><a class="{% if order=='real_installs_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='real_installs_asc') }}" title="Menos instalações primeiro">↑</a></span></th>
-          <th>Scores <span class="th-sort"><a class="{% if order=='scores' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='scores') }}" title="Maiores scores primeiro">↓</a><a class="{% if order=='scores_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='scores_asc') }}" title="Menores scores primeiro">↑</a></span></th>
-          <th>Receita/mês <span class="th-sort"><a class="{% if order=='revenue_monthly_usd_base' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='revenue_monthly_usd_base') }}" title="Maior receita primeiro">↓</a><a class="{% if order=='revenue_monthly_usd_base_asc' %}active{% endif %}" href="{{ url_for('apps_page', q=q, run_id=run_id or '', profile=profile, min_score=min_score or '', date_from=date_from, date_to=date_to, order='revenue_monthly_usd_base_asc') }}" title="Menor receita primeiro">↑</a></span></th>
-          <th>Perfil</th>
+          <th><button type="button" class="table-sort-button" data-sort-key="app" data-sort-type="text" data-sort-default="asc">App</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="created" data-sort-type="date">Pesquisa</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="category" data-sort-type="text" data-sort-default="asc">Categoria</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="score" data-sort-type="number">Nota</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="installs" data-sort-type="number">Installs</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="scores" data-sort-type="number">Scores</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="revenue" data-sort-type="number">Receita/mês</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="confidence" data-sort-type="text" data-sort-default="asc">Conf.</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="profile" data-sort-type="text" data-sort-default="asc">Perfil</button></th>
           <th></th>
         </tr>
       </thead>
       <tbody>
       {% for a in apps %}
-        <tr>
+        <tr
+          data-sort-row
+          data-sort-app="{{ (a.title or '')|lower }}"
+          data-sort-created="{{ a.created_at or a.run_created_at or '' }}"
+          data-sort-category="{{ (a.categoria or '')|lower }}"
+          data-sort-score="{{ a.score or 0 }}"
+          data-sort-installs="{{ a.real_installs or a.min_installs or 0 }}"
+          data-sort-scores="{{ (a.opportunity_score or 0) + (a.growth_score or 0) + (a.indie_score or 0) }}"
+          data-sort-revenue="{{ a.revenue_monthly_usd_base or 0 }}"
+          data-sort-confidence="{{ a.financial_confidence or '' }}"
+          data-sort-profile="{{ a.perfil_detectado or '' }}"
+          data-sort-id="{{ a.id or 0 }}"
+        >
           <td class="app-cell">
             <div class="d-flex gap-2 align-items-center">
               {% if a.icon %}<img class="tiny-icon" src="{{ a.icon }}" alt="Ícone">{% endif %}
@@ -192,10 +205,11 @@
           <td>{{ a.real_installs or a.min_installs or a.installs }}</td>
           <td><span class="chip">opp {{ a.opportunity_score or 0 }}</span> <span class="chip">grow {{ a.growth_score or 0 }}</span> <span class="chip">indie {{ a.indie_score or 0 }}</span></td>
           <td>US$ {{ '%.0f'|format(a.revenue_monthly_usd_base or 0) }}<br><span class="text-muted small">lucro US$ {{ '%.0f'|format(a.profit_monthly_usd_base or 0) }}</span></td>
+          <td><span class="status small-status {{ a.financial_confidence or '' }}">{{ a.financial_confidence or '—' }}</span></td>
           <td>{{ a.perfil_detectado }}</td>
           <td><a class="btn btn-sm btn-outline-primary rounded-pill" href="{{ url_for('app_detail', app_pk=a.id) }}">abrir</a></td>
         </tr>
-      {% else %}<tr><td colspan="9" class="text-muted">Nada encontrado.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="10" class="text-muted">Nada encontrado.</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
