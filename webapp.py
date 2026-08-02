@@ -1099,9 +1099,19 @@ def api_run_status(run_id: int):
 def settings_page():
     cards = api_cards()
     fields = api_field_rows()
+    card_lookup = {str(card.get("provider")): card for card in cards}
     cards_by_group = {group: [c for c in cards if c.get("group") == group] for group in API_PROVIDER_GROUPS}
     fields_by_group = {group: [f for f in fields if f.get("group") == group] for group in API_PROVIDER_GROUPS}
-    return render_template("settings.html", api=ApiConfig(), cards=cards, fields=fields, cards_by_group=cards_by_group, fields_by_group=fields_by_group, api_groups=API_PROVIDER_GROUPS)
+    return render_template(
+        "settings.html",
+        api=ApiConfig(),
+        cards=cards,
+        fields=fields,
+        card_lookup=card_lookup,
+        cards_by_group=cards_by_group,
+        fields_by_group=fields_by_group,
+        api_groups=API_PROVIDER_GROUPS,
+    )
 
 
 @app.route("/settings/apis", methods=["POST"])
