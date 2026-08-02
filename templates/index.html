@@ -191,11 +191,20 @@
     <div class="card-soft p-4">
       <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap"><div><div class="eyebrow">memória do radar</div><h2 class="section-title mb-0">Histórico de pesquisas</h2></div><a href="{{ url_for('runs_page') }}" class="btn btn-sm btn-light rounded-pill">Ver todas</a></div>
       <div class="table-responsive mt-3">
-        <table class="table align-middle history-table">
-          <thead><tr><th>ID</th><th>Status</th><th>Nível</th><th>Perfil</th><th>Apps</th><th>Controles</th></tr></thead>
+        <table class="table align-middle history-table" data-sortable-table>
+          <thead>
+            <tr>
+              <th><button type="button" class="table-sort-button" data-sort-key="id" data-sort-type="number">ID</button></th>
+              <th><button type="button" class="table-sort-button" data-sort-key="status" data-sort-type="status">Status</button></th>
+              <th><button type="button" class="table-sort-button" data-sort-key="level" data-sort-type="text" data-sort-default="asc">Nível</button></th>
+              <th><button type="button" class="table-sort-button" data-sort-key="profile" data-sort-type="text" data-sort-default="asc">Perfil</button></th>
+              <th><button type="button" class="table-sort-button" data-sort-key="apps" data-sort-type="number">Apps</button></th>
+              <th>Controles</th>
+            </tr>
+          </thead>
           <tbody>
           {% for r in runs %}
-            <tr><td>#{{ r.id }}</td><td><span class="status {{ r.status }}">{{ r.status }}</span></td><td>{{ r.level }}</td><td>{{ r.profile }}</td><td>{{ r.apps_kept }}</td><td>{{ run_controls(r, compact=True, show_label=False) }}</td></tr>
+            <tr data-sort-row data-sort-id="{{ r.id or 0 }}" data-sort-status="{{ r.status or '' }}" data-sort-level="{{ r.level or '' }}" data-sort-profile="{{ r.profile or '' }}" data-sort-apps="{{ r.apps_kept or 0 }}"><td>#{{ r.id }}</td><td><span class="status {{ r.status }}">{{ r.status }}</span></td><td>{{ r.level }}</td><td>{{ r.profile }}</td><td>{{ r.apps_kept }}</td><td>{{ run_controls(r, compact=True, show_label=False) }}</td></tr>
           {% else %}<tr><td colspan="6" class="text-muted">Nenhuma busca ainda.</td></tr>{% endfor %}
           </tbody>
         </table>
@@ -213,8 +222,19 @@
     <a href="{{ url_for('apps_page') }}" class="btn btn-sm btn-light rounded-pill"><i class="bi bi-table me-1"></i>Explorar apps</a>
   </div>
   <div class="table-responsive">
-    <table class="table table-hover align-middle apps-table compact-app-table">
-      <thead><tr><th>App</th><th>Categoria</th><th>Nota</th><th>Installs</th><th>Scores</th><th>Receita/mês</th><th>Conf.</th><th></th></tr></thead>
+    <table class="table table-hover align-middle apps-table compact-app-table" data-sortable-table>
+      <thead>
+        <tr>
+          <th><button type="button" class="table-sort-button" data-sort-key="app" data-sort-type="text" data-sort-default="asc">App</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="category" data-sort-type="text" data-sort-default="asc">Categoria</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="score" data-sort-type="number">Nota</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="installs" data-sort-type="number">Installs</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="scores" data-sort-type="number">Scores</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="revenue" data-sort-type="number">Receita/mês</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="confidence" data-sort-type="text" data-sort-default="asc">Conf.</button></th>
+          <th></th>
+        </tr>
+      </thead>
       <tbody>
         {% for a in apps %}{% include "partials_app_table_row.html" %}{% else %}<tr><td colspan="8" class="text-muted">Rode uma busca para popular o radar.</td></tr>{% endfor %}
       </tbody>

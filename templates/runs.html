@@ -17,11 +17,36 @@
     </div>
   </div>
   <div class="table-responsive">
-    <table class="table align-middle history-table">
-      <thead><tr><th>ID</th><th>Criado</th><th>Status</th><th>Escopo</th><th>Nível</th><th>Perfil</th><th>Qtd.</th><th>Apps</th><th>Mensagem</th><th>Controles</th></tr></thead>
+    <table class="table align-middle history-table" id="runsTable" data-sortable-table>
+      <thead>
+        <tr>
+          <th><button type="button" class="table-sort-button" data-sort-key="id" data-sort-type="number">ID</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="created" data-sort-type="date">Criado</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="status" data-sort-type="status">Status</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="scope" data-sort-type="text" data-sort-default="asc">Escopo</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="level" data-sort-type="text" data-sort-default="asc">Nível</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="profile" data-sort-type="text" data-sort-default="asc">Perfil</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="quantity" data-sort-type="number">Qtd.</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="apps" data-sort-type="number">Apps</button></th>
+          <th><button type="button" class="table-sort-button" data-sort-key="message" data-sort-type="text" data-sort-default="asc">Mensagem</button></th>
+          <th>Controles</th>
+        </tr>
+      </thead>
       <tbody>
       {% for r in runs %}
-        <tr class="{{ 'table-active-run' if r.status in RUN_ACTIVE_STATUSES else '' }}">
+        <tr
+          class="{{ 'table-active-run' if r.status in RUN_ACTIVE_STATUSES else '' }}"
+          data-sort-row
+          data-sort-id="{{ r.id or 0 }}"
+          data-sort-created="{{ r.created_at or '' }}"
+          data-sort-status="{{ r.status or '' }}"
+          data-sort-scope="{{ r.scope or '' }}"
+          data-sort-level="{{ r.level or '' }}"
+          data-sort-profile="{{ r.profile or '' }}"
+          data-sort-quantity="{{ r.quantity or 0 }}"
+          data-sort-apps="{{ r.apps_kept or 0 }}"
+          data-sort-message="{{ r.last_message or '' }}"
+        >
           <td><b>#{{ r.id }}</b></td>
           <td class="small text-muted">{{ r.created_at }}</td>
           <td><span class="status {{ r.status }}">{{ r.status }}</span></td>
