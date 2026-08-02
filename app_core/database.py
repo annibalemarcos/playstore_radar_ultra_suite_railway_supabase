@@ -642,8 +642,12 @@ def get_api_usage_stats(db_path: str | Path) -> Dict[str, Dict[str, Any]]:
         "Bright Data": ["Bright Data", "BrightData"],
         "Apify": ["Apify"],
         "Firecrawl": ["Firecrawl"],
+        "Hyperbrowser": ["Hyperbrowser"],
+        "Browserless": ["Browserless"],
+        "Browserbase": ["Browserbase"],
         "ScrapingAnt": ["ScrapingAnt"],
         "SerpAPI": ["SerpAPI", "serpapi_json_preview"],
+        "SearchAPI": ["SearchAPI", "_searchapi_raw_preview", "searchapi_json_preview"],
         "Crawlbase": ["Crawlbase"],
         "Decodo": ["Decodo", "decodo"],
         "Brave Search": ["Brave Search", "brave_search", "brave_search_json_preview"],
@@ -673,6 +677,8 @@ def get_api_usage_stats(db_path: str | Path) -> Dict[str, Dict[str, Any]]:
         "AbstractAPI": ["AbstractAPI"],
         "WolframAlpha": ["WolframAlpha"],
         "Ollama": ["Ollama"],
+        "Cloudflare API Token": ["Cloudflare API Token"],
+        "Cloudflare R2": ["Cloudflare R2", "cloudflare_r2"],
     }
     out: Dict[str, Dict[str, Any]] = {}
     with connect(db_path) as con:
