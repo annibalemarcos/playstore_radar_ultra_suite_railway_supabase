@@ -217,6 +217,7 @@ console.log('PlayStore Radar Ultra carregado. Pequeno gafanhoto dos apps, bora g
     setHeaderState(table, key, dir);
   }
 
+<<<<<<< HEAD
   function urlParamNames(table) {
     const prefix = table.dataset.sortParamPrefix || '';
     return {
@@ -250,6 +251,8 @@ console.log('PlayStore Radar Ultra carregado. Pequeno gafanhoto dos apps, bora g
     sortTable(table, key, type, dir === 'asc' ? 'asc' : 'desc');
   }
 
+=======
+>>>>>>> origin/main
   function bindTable(table) {
     table.querySelectorAll('[data-sort-key]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -259,10 +262,15 @@ console.log('PlayStore Radar Ultra carregado. Pequeno gafanhoto dos apps, bora g
         const defaultDir = button.dataset.sortDefault || (type === 'text' ? 'asc' : 'desc');
         const dir = previous?.key === key ? (previous.dir === 'asc' ? 'desc' : 'asc') : defaultDir;
         sortTable(table, key, type, dir);
+<<<<<<< HEAD
         syncSortUrl(table, key, dir);
       });
     });
     restoreSort(table);
+=======
+      });
+    });
+>>>>>>> origin/main
   }
 
   document.querySelectorAll('[data-sortable-table]').forEach(bindTable);

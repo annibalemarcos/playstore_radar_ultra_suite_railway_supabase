@@ -661,6 +661,7 @@ body{background:radial-gradient(circle at top left,#eef2ff,transparent 34%),var(
   color:#10243f;
   font-weight:950;
 }
+<<<<<<< HEAD
 .api-diagnostic-overview{
   background:linear-gradient(135deg,#fff,#f8fbff);
 }
@@ -765,4 +766,12 @@ body{background:radial-gradient(circle at top left,#eef2ff,transparent 34%),var(
   .api-diagnostic-overview-grid,.api-diagnostic-grid{grid-template-columns:1fr}
   .api-field-tools{justify-content:flex-start;width:100%}
   .copy-env-btn{max-width:100%}
+=======
+@media(max-width:1200px){
+  .api-filter-grid{grid-template-columns:1fr 1fr}
+  .api-filter-grid .api-filter-search{grid-column:1/-1}
+}
+@media(max-width:576px){
+  .api-filter-grid{grid-template-columns:1fr}
+>>>>>>> origin/main
 }

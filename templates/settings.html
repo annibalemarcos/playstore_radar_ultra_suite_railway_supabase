@@ -142,9 +142,12 @@
           <option value="configured">Com chave</option>
           <option value="usage">Uso local</option>
           <option value="enriched">Apps enriquecidos</option>
+<<<<<<< HEAD
           <option value="latency">Latencia</option>
           <option value="last_test">Ultimo teste</option>
           <option value="last_used">Ultima coleta</option>
+=======
+>>>>>>> origin/main
         </select>
         <button class="btn btn-light rounded-pill" id="apiClearFilters" type="button"><i class="bi bi-x-lg me-1"></i> Limpar</button>
       </div>
@@ -173,9 +176,12 @@
                 data-failed="{{ 1 if card.test and not card.test.ok else 0 }}"
                 data-usage="{{ card.usage.call_estimate or 0 }}"
                 data-enriched="{{ card.usage.apps_enriched or 0 }}"
+<<<<<<< HEAD
                 data-latency="{{ card.test.latency_ms or 0 }}"
                 data-last-test="{{ card.test.created_at or '' }}"
                 data-last-used="{{ card.usage.last_used_at or '' }}"
+=======
+>>>>>>> origin/main
               >
                 <div class="api-card-top">
                   <div>
@@ -245,6 +251,7 @@
   const sections = Array.from(document.querySelectorAll('[data-api-section]'));
   const fields = Array.from(document.querySelectorAll('[data-api-field]'));
   const fieldGroups = Array.from(document.querySelectorAll('[data-api-field-group]'));
+<<<<<<< HEAD
   const copyButtons = Array.from(document.querySelectorAll('[data-copy-env]'));
 
   const copyText = async (text) => {
@@ -292,6 +299,13 @@
   const normalize = (value) => (value || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const numberValue = (node, name) => Number(node.dataset[name] || 0);
   const dateValue = (node, name) => Date.parse((node.dataset[name] || '').replace(' ', 'T')) || 0;
+=======
+
+  if (!searchInput || !statusFilter || !groupFilter || !sortFilter || !cards.length) return;
+
+  const normalize = (value) => (value || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const numberValue = (node, name) => Number(node.dataset[name] || 0);
+>>>>>>> origin/main
   const textMatches = (node, term) => {
     if (!term) return true;
     const haystack = normalize([
@@ -324,9 +338,12 @@
           if (sortMode === 'configured') return numberValue(b, 'configured') - numberValue(a, 'configured') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
           if (sortMode === 'usage') return numberValue(b, 'usage') - numberValue(a, 'usage') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
           if (sortMode === 'enriched') return numberValue(b, 'enriched') - numberValue(a, 'enriched') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+<<<<<<< HEAD
           if (sortMode === 'latency') return numberValue(a, 'latency') - numberValue(b, 'latency') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
           if (sortMode === 'last_test') return dateValue(b, 'lastTest') - dateValue(a, 'lastTest') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
           if (sortMode === 'last_used') return dateValue(b, 'lastUsed') - dateValue(a, 'lastUsed') || (a.dataset.provider || '').localeCompare(b.dataset.provider || '');
+=======
+>>>>>>> origin/main
           return numberValue(b, 'working') - numberValue(a, 'working')
             || numberValue(b, 'configured') - numberValue(a, 'configured')
             || numberValue(a, 'failed') - numberValue(b, 'failed')
@@ -379,6 +396,7 @@
     if (emptyState) emptyState.classList.toggle('d-none', visibleCards !== 0);
   };
 
+<<<<<<< HEAD
   const syncFilterUrl = () => {
     const nextParams = new URLSearchParams(window.location.search);
     const values = {
@@ -402,6 +420,11 @@
   [searchInput, statusFilter, groupFilter, sortFilter].forEach((control) => {
     control.addEventListener('input', () => { applyFilters(); syncFilterUrl(); });
     control.addEventListener('change', () => { applyFilters(); syncFilterUrl(); });
+=======
+  [searchInput, statusFilter, groupFilter, sortFilter].forEach((control) => {
+    control.addEventListener('input', applyFilters);
+    control.addEventListener('change', applyFilters);
+>>>>>>> origin/main
   });
   clearButton?.addEventListener('click', () => {
     searchInput.value = '';
@@ -409,7 +432,10 @@
     groupFilter.value = 'all';
     sortFilter.value = 'status';
     applyFilters();
+<<<<<<< HEAD
     syncFilterUrl();
+=======
+>>>>>>> origin/main
     searchInput.focus();
   });
 

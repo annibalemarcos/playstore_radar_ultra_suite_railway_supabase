@@ -183,7 +183,10 @@ def app_table_row(app: Dict[str, Any], index: int) -> str:
           data-indie="{as_int(app.get('indie_score'))}"
           data-revenue="{as_float(app.get('revenue_monthly_usd_base'))}"
           data-confidence="{h(app.get('financial_confidence') or '')}"
+<<<<<<< HEAD
           data-sources="{h('|'.join(sources))}"
+=======
+>>>>>>> origin/main
           data-scores="{score_sum}"
           data-date="{h(app.get('created_at') or app.get('run_created_at') or '')}">
         <td class="rank-cell">#{h(app.get('rank') or index)}</td>
@@ -656,10 +659,14 @@ function closeModal() {{
   modal.setAttribute('aria-hidden', 'true');
   document.body.style.overflow = '';
 }}
+<<<<<<< HEAD
 [q,cat,profile,minScore,minRevenue,source].forEach(el => {{
   el.addEventListener('input', () => {{ filt(); syncUrl(); }});
   el.addEventListener('change', () => {{ filt(); syncUrl(); }});
 }});
+=======
+[q,cat,profile,minScore].forEach(el => el.addEventListener('input', filt));
+>>>>>>> origin/main
 document.querySelectorAll('[data-sort]').forEach(btn => btn.addEventListener('click', () => {{
   const nextDir = btn.classList.contains('table-sort-button') && currentSort.key === btn.dataset.sort
     ? (currentSort.dir === 'asc' ? 'desc' : 'asc')

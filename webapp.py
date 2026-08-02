@@ -347,6 +347,7 @@ def _run_search_summary(run: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+<<<<<<< HEAD
 def _queue_max_workers() -> int:
     try:
         return max(1, int(os.getenv("PLAYSTORE_RADAR_MAX_WORKERS", "1")))
@@ -367,6 +368,9 @@ def _cleanup_active_threads() -> None:
 
 
 def _run_worker_thread(run_id: int, cfg: RunConfig, api: Optional[ApiConfig] = None) -> None:
+=======
+def _spawn_worker(run_id: int, cfg: RunConfig, api: Optional[ApiConfig] = None) -> None:
+>>>>>>> origin/main
     api = api or ApiConfig()
     try:
         run_scraper(cfg, api=api, run_id=run_id)
@@ -567,6 +571,7 @@ def _api_dashboard_stats(max_age_seconds: int = 60) -> tuple[Dict[str, Dict[str,
         tests = dict(_API_DASHBOARD_STATS_CACHE.get("tests") or {})
         if is_fresh:
             return usage, tests
+<<<<<<< HEAD
         should_load_now = not loaded_at
         if not _API_DASHBOARD_STATS_CACHE.get("refreshing"):
             _API_DASHBOARD_STATS_CACHE["refreshing"] = True
@@ -578,6 +583,12 @@ def _api_dashboard_stats(max_age_seconds: int = 60) -> tuple[Dict[str, Dict[str,
             usage = dict(_API_DASHBOARD_STATS_CACHE.get("usage") or {})
             tests = dict(_API_DASHBOARD_STATS_CACHE.get("tests") or {})
     return usage, tests
+=======
+        if not _API_DASHBOARD_STATS_CACHE.get("refreshing"):
+            _API_DASHBOARD_STATS_CACHE["refreshing"] = True
+            threading.Thread(target=_refresh_api_dashboard_stats, name="api-dashboard-stats", daemon=True).start()
+        return usage, tests
+>>>>>>> origin/main
 
 
 def _remember_api_test_result(result: Dict[str, Any]) -> None:
@@ -592,7 +603,10 @@ def _remember_api_test_result(result: Dict[str, Any]) -> None:
             "status": result.get("status") or "",
             "message": result.get("message") or "",
             "latency_ms": int(result.get("latency_ms") or 0),
+<<<<<<< HEAD
             "diagnostics_json": json.dumps(result.get("diagnostics") or {}, ensure_ascii=False),
+=======
+>>>>>>> origin/main
             "created_at": now_iso(),
         }
         _API_DASHBOARD_STATS_CACHE["tests"] = tests
@@ -1350,20 +1364,33 @@ def test_provider_connection(provider: str, api: Optional[ApiConfig] = None) -> 
         status = f"HTTP {response.status_code}" if response is not None else "sem resposta"
         message = _redact_api_message(_status_message(response) if response is not None else "sem resposta", api)
         ok = bool(response is not None and 200 <= response.status_code < 300)
+<<<<<<< HEAD
         diagnostics = _response_diagnostics(response)
         result = {"provider": provider, "ok": ok, "status": status, "message": message, "latency_ms": latency_ms, "diagnostics": diagnostics}
         try:
             save_api_test_result(db_path(), provider, ok, status, message, latency_ms, diagnostics)
+=======
+        result = {"provider": provider, "ok": ok, "status": status, "message": message, "latency_ms": latency_ms}
+        try:
+            save_api_test_result(db_path(), provider, ok, status, message, latency_ms)
+>>>>>>> origin/main
         except Exception:
             pass
         _remember_api_test_result(result)
         return result
     except Exception as exc:  # noqa: BLE001
         latency_ms = int((time.perf_counter() - start) * 1000)
+<<<<<<< HEAD
         message = _redact_api_message(str(exc), api)
         result = {"provider": provider, "ok": False, "status": "erro", "message": message, "latency_ms": latency_ms, "diagnostics": {}}
         try:
             save_api_test_result(db_path(), provider, False, "erro", message, latency_ms, {})
+=======
+        message = str(exc)[:500]
+        result = {"provider": provider, "ok": False, "status": "erro", "message": message, "latency_ms": latency_ms}
+        try:
+            save_api_test_result(db_path(), provider, False, "erro", message, latency_ms)
+>>>>>>> origin/main
         except Exception:
             pass
         _remember_api_test_result(result)
@@ -1490,7 +1517,11 @@ def run_detail(run_id: int):
         return redirect(url_for("index"))
     logs = list_logs(db_path(), run_id, 200)
     apps = list_apps(db_path(), run_id=run_id, order="opportunity_score", limit=200)
+<<<<<<< HEAD
     return render_template("run_detail.html", run=run, run_summary=_run_search_summary(run), logs=logs, apps=apps, queue=_queue_info())
+=======
+    return render_template("run_detail.html", run=run, run_summary=_run_search_summary(run), logs=logs, apps=apps)
+>>>>>>> origin/main
 
 
 @app.route("/run/<int:run_id>/pause", methods=["POST"])
@@ -1611,7 +1642,10 @@ def settings_page():
     card_lookup = {str(card.get("provider")): card for card in cards}
     cards_by_group = {group: [c for c in cards if c.get("group") == group] for group in API_PROVIDER_GROUPS}
     fields_by_group = {group: [f for f in fields if f.get("group") == group] for group in API_PROVIDER_GROUPS}
+<<<<<<< HEAD
     diagnostic_summary = api_diagnostic_summary(cards)
+=======
+>>>>>>> origin/main
     return render_template(
         "settings.html",
         api=ApiConfig(),
@@ -1621,7 +1655,10 @@ def settings_page():
         cards_by_group=cards_by_group,
         fields_by_group=fields_by_group,
         api_groups=API_PROVIDER_GROUPS,
+<<<<<<< HEAD
         diagnostic_summary=diagnostic_summary,
+=======
+>>>>>>> origin/main
     )
 
 

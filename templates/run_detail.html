@@ -52,9 +52,12 @@
   </div>
 
   <div class="run-progress-wrap">
+<<<<<<< HEAD
     {% if run.status == 'queued' %}
       <div class="queue-inline mb-2"><i class="bi bi-list-task"></i> Aguardando worker livre · {{ queue.queued or 0 }} job(s) na fila · limite {{ queue.max_workers or 1 }} worker(s)</div>
     {% endif %}
+=======
+>>>>>>> origin/main
     <div class="progress progress-soft">
       <div id="bar" class="progress-bar" style="width: {{ run_summary.progress_pct }}%"></div>
     </div>
