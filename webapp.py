@@ -17,7 +17,13 @@ import requests
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from app_core.categories import categorias_para_form
+from app_core.categories import (
+    CATEGORIAS_APPS,
+    CATEGORIAS_JOGOS,
+    SUBCATEGORIAS,
+    categorias_para_form,
+    selecionar_categorias,
+)
 from app_core.config import (
     API_FIELDS,
     API_PROVIDER_GROUPS,
@@ -233,6 +239,100 @@ def _cfg_from_run(run: Dict[str, Any]) -> RunConfig:
     cfg.output_dir = str(output_dir())
     cfg.apply_level_defaults(ApiConfig())
     return cfg
+
+
+def _csv_items(value: Any) -> List[str]:
+    if isinstance(value, (list, tuple, set)):
+        raw = ",".join(str(item) for item in value)
+    else:
+        raw = str(value or "")
+    return [item.strip().upper() for item in raw.replace(";", ",").split(",") if item.strip()]
+
+
+def _yes_no(value: Any) -> str:
+    return "sim" if bool(value) else "não"
+
+
+def _run_search_summary(run: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = _cfg_from_run(run)
+    category_name_by_code = {
+        code.upper(): name
+        for code, name, _term in [*CATEGORIAS_APPS.values(), *CATEGORIAS_JOGOS.values()]
+    }
+    subcategory_name_by_token = {
+        f"{category_code.upper()}::{sub_code.upper()}": f"{category_name_by_code.get(category_code.upper(), category_code)} · {sub_name}"
+        for category_code, subcats in SUBCATEGORIAS.items()
+        for sub_code, sub_name, _term in subcats
+    }
+
+    category_codes = _csv_items(cfg.category_codes)
+    subcategory_codes = _csv_items(cfg.subcategory_codes)
+    category_names = [category_name_by_code.get(code, code) for code in category_codes]
+    subcategory_names = [subcategory_name_by_token.get(code, code) for code in subcategory_codes]
+
+    if cfg.search_query:
+        search_mode = "Palavra-chave"
+        main_context = f'Busca livre por "{cfg.search_query}"'
+        filter_context = "Escopo e categorias foram ignorados porque a busca foi feita por termo."
+        target_categories: List[Dict[str, str]] = []
+        category_detail = "ignorado na busca por termo"
+        subcategory_detail = "ignorado na busca por termo"
+    else:
+        search_mode = "Categorias"
+        selected_targets = selecionar_categorias(cfg.scope, cfg.category_codes, cfg.subcategory_codes)
+        if cfg.max_categories:
+            selected_targets = selected_targets[: cfg.max_categories]
+        target_categories = [
+            {"code": code, "name": name, "term": term}
+            for code, name, term in selected_targets
+        ]
+        if cfg.scope == "TODAS":
+            main_context = "Todas as categorias de apps e jogos"
+        elif subcategory_names:
+            main_context = ", ".join(subcategory_names)
+        elif category_names:
+            main_context = ", ".join(category_names)
+        else:
+            main_context = f"Todas as categorias de {SCOPES.get(cfg.scope, cfg.scope).lower()}"
+        filter_context = f"{len(target_categories)} alvo(s) efetivos na coleta."
+        category_detail = ", ".join(category_names) if category_names else "todas do escopo"
+        subcategory_detail = ", ".join(subcategory_names) if subcategory_names else "nenhuma"
+
+    categories_total = int(run.get("categories_total") or len(target_categories) or (1 if cfg.search_query else 0))
+    categories_done = int(run.get("categories_done") or 0)
+    progress_pct = round((categories_done * 100 / categories_total), 1) if categories_total else 0
+    if int(progress_pct) == progress_pct:
+        progress_pct = int(progress_pct)
+
+    detail_rows = [
+        {"label": "Tipo de busca", "value": search_mode},
+        {"label": "Palavra-chave", "value": cfg.search_query or "não usada"},
+        {"label": "Escopo", "value": f"{cfg.scope} · {SCOPES.get(cfg.scope, cfg.scope)}"},
+        {"label": "Categorias marcadas", "value": category_detail},
+        {"label": "Subcategorias marcadas", "value": subcategory_detail},
+        {"label": "Quantidade", "value": f"{cfg.quantity} apps/categoria"},
+        {"label": "Máx. categorias", "value": str(cfg.max_categories) if cfg.max_categories else "todas"},
+        {"label": "Detalhes por categoria", "value": str(cfg.detail_limit or cfg.quantity)},
+        {"label": "Reviews por app", "value": str(cfg.reviews_per_app or 0)},
+        {"label": "Apps pagos", "value": _yes_no(cfg.include_paid_apps)},
+        {"label": "HTML exportável", "value": _yes_no(cfg.open_html)},
+        {"label": "País / idioma", "value": f"{cfg.country.upper()} / {cfg.lang}"},
+        {"label": "Câmbio", "value": f"US$ 1 = R$ {cfg.exchange_rate_brl:.2f}"},
+    ]
+
+    return {
+        "cfg": cfg,
+        "progress_pct": progress_pct,
+        "search_mode": search_mode,
+        "main_context": main_context,
+        "filter_context": filter_context,
+        "category_names": category_names,
+        "subcategory_names": subcategory_names,
+        "target_categories": target_categories,
+        "target_preview": target_categories[:12],
+        "target_more_count": max(0, len(target_categories) - 12),
+        "detail_rows": detail_rows,
+    }
 
 
 def _spawn_worker(run_id: int, cfg: RunConfig, api: Optional[ApiConfig] = None) -> None:
@@ -712,7 +812,7 @@ def run_detail(run_id: int):
         return redirect(url_for("index"))
     logs = list_logs(db_path(), run_id, 200)
     apps = list_apps(db_path(), run_id=run_id, order="opportunity_score", limit=200)
-    return render_template("run_detail.html", run=run, logs=logs, apps=apps)
+    return render_template("run_detail.html", run=run, run_summary=_run_search_summary(run), logs=logs, apps=apps)
 
 
 @app.route("/run/<int:run_id>/pause", methods=["POST"])
